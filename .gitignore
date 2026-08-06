@@ -1,0 +1,5 @@
+documents/
+artifacts/
+submission.json
+.env
+.venv/
