@@ -29,50 +29,52 @@ NEAR_LIMIT_PCT = 2.5
 JUDGE_SCHEMA = {
     "type": "object",
     "properties": {
-        "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
-        "issues": {
+        "cells": {
             "type": "array",
             "items": {
                 "type": "object",
                 "properties": {
-                    "type": {"type": "string", "enum": [
-                        "wrong_formula", "wrong_threshold", "wrong_strictness",
-                        "missed_adjustment", "suspect_category", "false_decoy",
-                        "period_error", "fx_error", "evidence_invalid",
-                        "unmodeled_rule_material"]},
-                    "txn_ids": {"type": "array", "items": {"type": "string"}},
-                    "explanation": {"type": "string"},
+                    "clause": {"type": "string"},
+                    "verdict": {"type": "string", "enum": ["agree", "disagree", "uncertain"]},
+                    "issues": {"type": "array", "items": {
+                        "type": "object",
+                        "properties": {
+                            "type": {"type": "string", "enum": [
+                                "wrong_formula", "wrong_threshold", "wrong_strictness",
+                                "missed_adjustment", "suspect_category", "false_decoy",
+                                "period_error", "fx_error", "evidence_invalid",
+                                "unmodeled_rule_material"]},
+                            "txn_ids": {"type": "array", "items": {"type": "string"}},
+                            "explanation": {"type": "string"},
+                        },
+                        "required": ["type", "txn_ids", "explanation"],
+                    }},
                 },
-                "required": ["type", "txn_ids", "explanation"],
+                "required": ["clause", "verdict", "issues"],
             },
         },
         "confidence": {"type": "number"},
     },
-    "required": ["verdict", "issues", "confidence"],
+    "required": ["cells", "confidence"],
 }
 
-JUDGE_PROMPT = """You are auditing ONE covenant verdict produced by a deterministic engine
-from LLM-extracted facts. Decide whether the computation faithfully implements the clause.
+JUDGE_PROMPT = """You are auditing ALL covenant verdicts of ONE borrower, produced by a
+deterministic engine from LLM-extracted facts. For EACH clause below decide whether the
+computation faithfully implements its verbatim text.
 
-VERBATIM CLAUSE:
-{quote}
-
-MACHINE SPEC USED (components / formula / threshold / condition):
-{spec}
-
-COMPONENT VALUES AND TOP CONTRIBUTING TRANSACTIONS (with category provenance):
-{components}
+SHARED CONTEXT - ALL NON-NOISE LEDGER ROWS (with category provenance):
+{rows}
 
 ADJUSTMENTS APPLIED (audit reclassifications, exclusions, amount fills, off-ledger,
 FX, EBITDA add-backs - each with its documentary quote):
 {adjustments}
 
 LARGEST ROWS EXCLUDED AS NOISE/DECOYS (re-including a wrongly-excluded one could
-change the verdict - flag false_decoy if any looks like a genuine business row):
+change a verdict - flag false_decoy if any looks like a genuine business row):
 {noise_rows}
 
-ENGINE RESULT: status={status}, actual={actual}, evidence={evidence},
-margin vs limit = {margin}%.
+CELLS UNDER REVIEW (verbatim clause + machine spec + component values + engine result):
+{cells}
 
 Rules of the game you must enforce:
 - affiliation comes from the KYC dossier, never from payment descriptions;
@@ -81,7 +83,8 @@ Rules of the game you must enforce:
 - evidence must be the single txn whose fact-reversal flips the verdict (null for
   aggregate/ratio outcomes not driven by one fact-linked txn).
 
-Report agree/disagree/uncertain plus concrete issues. Empty issues list if agree."""
+Return one entry per clause: agree/disagree/uncertain plus concrete issues
+(empty issues list when you agree)."""
 
 SOLVER_SCHEMA = {
     "type": "object",
@@ -111,14 +114,10 @@ def fallback_solve(sid, clause, quote, facts_sf, rows):
     return generate(prompt, model=STRONG, schema=SOLVER_SCHEMA, reasoning_effort="high")
 
 
-def _cell_context(sid, clause, trails, facts, ledger, answers):
-    cell = trails[sid]["cells"][clause]
+def _scenario_context(sid, trails, facts, ledger, answers):
+    """One prompt covering every computed cell of a scenario (shared context sent once)."""
     sf = trails[sid]["facts"]
-    rows_by_id = {r["txn_id"]: r for r in ledger[sid]}
 
-    comp_lines = []
-    for name, value in cell["components"].items():
-        comp_lines.append(f"{name} = {value}")
     contributors = []
     for r in ledger[sid]:
         cat = sf["categories"].get(r["txn_id"])
@@ -142,19 +141,29 @@ def _cell_context(sid, clause, trails, facts, ledger, answers):
          "off_ledger": a.get("off_ledger"), "addbacks": a.get("ebitda_addbacks")}
         for a in facts["audit"].get(sid, [])]
 
-    ans = answers[sid][clause]
-    spec = next(c for c in facts["covenants"][sid]["clauses"] if c["clause"] == clause)
+    cells_fmt = []
+    for clause, cell in sorted(trails[sid]["cells"].items()):
+        ans = answers[sid].get(clause)
+        if ans is None:
+            continue
+        spec = next(c for c in facts["covenants"][sid]["clauses"]
+                    if c["clause"] == clause)
+        margin = cell.get("margin_pct")
+        cells_fmt.append(
+            f"--- CLAUSE {clause} ---\n"
+            f"VERBATIM: {cell.get('quote') or spec.get('quote', '')}\n"
+            f"SPEC: {json.dumps({k: spec[k] for k in ('components', 'formula', 'threshold', 'condition')}, ensure_ascii=False)}\n"
+            f"COMPONENT VALUES: {json.dumps(cell['components'], ensure_ascii=False)}\n"
+            f"ENGINE RESULT: status={ans['status']}, actual={ans['actual']}, "
+            f"evidence={ans['evidence_txn_id']}, "
+            f"margin={None if margin is None else round(margin, 2)}%")
+
     return JUDGE_PROMPT.format(
-        quote=cell.get("quote") or spec.get("quote", ""),
-        spec=json.dumps({k: spec[k] for k in
-                         ("components", "formula", "threshold", "condition")},
-                        ensure_ascii=False),
-        components="\n".join(comp_lines) + "\nALL NON-NOISE ROWS:\n" + "\n".join(contributors),
+        rows="\n".join(contributors),
         adjustments=json.dumps({"applied": adj, "source_quotes": audit_quotes},
                                ensure_ascii=False)[:12000],
         noise_rows=noise_fmt,
-        status=ans["status"], actual=ans["actual"], evidence=ans["evidence_txn_id"],
-        margin=None if cell.get("margin_pct") is None else round(cell["margin_pct"], 2),
+        cells="\n\n".join(cells_fmt),
     )
 
 
@@ -207,24 +216,24 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
         report.append(f"{sid}/{clause}: re-extracted covenants ({critique[:100]})")
         changed = True
 
-    for issue in row_issues:
-        for txn in issue["txn_ids"]:
-            row = next((r for r in ledger[sid] if r["txn_id"] == txn), None)
-            if row is None:
-                continue
+    if row_issues:
+        wanted = {t for i in row_issues for t in i["txn_ids"]}
+        rows = [r for r in ledger[sid] if r["txn_id"] in wanted]
+        if rows:
             kyc = facts["kyc"].get(sid, {})
+            concerns = "; ".join(i["explanation"] for i in row_issues)
             relabel = generate(
-                "Re-examine ONE ledger row's category in light of a reviewer concern.\n"
-                f"CONCERN: {issue['explanation']}\n"
-                f"ROW: {json.dumps(row, ensure_ascii=False)}\n"
+                "Re-examine these ledger rows' categories in light of reviewer concerns.\n"
+                f"CONCERNS: {concerns}\n"
+                f"ROWS: {json.dumps(rows, ensure_ascii=False)}\n"
                 f"KYC ownership: {json.dumps(kyc.get('ownership', []), ensure_ascii=False)}; "
                 f"related-party rule: {kyc.get('threshold_quote')}\n"
                 f"Categories: {json.dumps(extract.TAXONOMY)}",
                 model=STRONG, schema=categorize.ROW_SCHEMA)
             for lab in relabel["labels"]:
-                if lab["txn_id"] == txn:
-                    categories[sid][txn] = {**lab, "agree": False, "rejudged": True}
-                    report.append(f"{sid}/{clause}: relabeled {txn} -> {lab['category']}")
+                if lab["txn_id"] in wanted:
+                    categories[sid][lab["txn_id"]] = {**lab, "agree": False, "rejudged": True}
+                    report.append(f"{sid}/{clause}: relabeled {lab['txn_id']} -> {lab['category']}")
                     changed = True
 
     if audit_issues:
@@ -274,36 +283,38 @@ def main() -> None:
                 attention.add((sid, clause))
                 report.append(f"{sid}/{clause}: near-limit margin {round(m, 2)}% -> review")
 
-    # ---- Stage B: judge EVERY computed cell; re-run targeted fixes
+    # ---- Stage B: judge per SCENARIO (one batched call for all its cells)
     for rnd in range(1, ROUNDS + 1):
         n_disagree = 0
         for sid in sorted(template["answers"]):
+            if sid not in answers or sid not in trails:
+                continue
+            if rnd > 1 and not any((sid, c) in attention
+                                   for c in template["answers"][sid]):
+                continue
+            prompt = _scenario_context(sid, trails, facts, ledger, answers)
+            result = generate(prompt, model=STRONG, schema=JUDGE_SCHEMA,
+                              reasoning_effort="high")
+            cell_verdicts = {c["clause"]: c for c in result.get("cells", [])}
+            scenario_changed = False
             for clause in sorted(template["answers"][sid]):
-                if rnd > 1 and (sid, clause) not in attention:
+                v = cell_verdicts.get(clause)
+                if v is None or answers.get(sid, {}).get(clause) is None:
                     continue
-                if answers.get(sid, {}).get(clause) is None:
-                    continue  # handled by fallback pass below
-                prompt = _cell_context(sid, clause, trails, facts, ledger, answers)
-                verdict = generate(prompt, model=STRONG, schema=JUDGE_SCHEMA,
-                                   reasoning_effort="high")
-                if verdict["verdict"] == "agree":
+                if v["verdict"] == "agree":
                     attention.discard((sid, clause))
                     continue
                 n_disagree += 1
                 attention.add((sid, clause))
                 report.append(
-                    f"round{rnd} {sid}/{clause}: {verdict['verdict']} - "
+                    f"round{rnd} {sid}/{clause}: {v['verdict']} - "
                     + "; ".join(f"{i['type']}:{i['explanation'][:80]}"
-                                for i in verdict["issues"]))
-                unmodeled = [i for i in verdict["issues"]
+                                for i in v["issues"]))
+                unmodeled = [i for i in v["issues"]
                              if i["type"] == "unmodeled_rule_material"]
-                changed = _apply_issues(sid, clause, verdict["issues"],
-                                        facts, categories, ledger, report)
-                if changed:
-                    new_ans, new_trail = _recompute_scenario(
-                        sid, facts, categories, ledger, meta, flags)
-                    answers[sid] = new_ans
-                    trails[sid] = new_trail
+                if _apply_issues(sid, clause, v["issues"],
+                                 facts, categories, ledger, report):
+                    scenario_changed = True
                 if unmodeled:
                     spec = next(c for c in facts["covenants"][sid]["clauses"]
                                 if c["clause"] == clause)
@@ -317,6 +328,11 @@ def main() -> None:
                             "evidence_txn_id": solved["evidence_txn_id"]}
                         report.append(f"{sid}/{clause}: fallback solver override "
                                       f"({solved['reasoning'][:120]})")
+            if scenario_changed:
+                new_ans, new_trail = _recompute_scenario(
+                    sid, facts, categories, ledger, meta, flags)
+                answers[sid] = new_ans
+                trails[sid] = new_trail
         if n_disagree == 0:
             break
 

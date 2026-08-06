@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import TAXONOMY  # noqa: E402
-from llm import CHEAP, STRONG, generate  # noqa: E402
+from llm import CHEAP, STRONG, generate  # noqa: F401  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -150,13 +150,13 @@ def main() -> None:
         p2 = label_pass(rows, ctx, stem_counts, CHEAP, shuffle_seed=42)
 
         labels = {}
+        disputed = []
         n_cat, n_decoy = 0, 0
         for r in rows:
             txn = r["txn_id"]
             a, b = p1.get(txn), p2.get(txn)
             if a is None or b is None:
-                pick = a or b
-                labels[txn] = {**pick, "agree": False}
+                labels[txn] = {**(a or b), "agree": False}
                 continue
             cat_agree = a["category"] == b["category"]
             decoy_agree = a["is_decoy"] == b["is_decoy"]
@@ -165,13 +165,34 @@ def main() -> None:
                 continue
             n_cat += (not cat_agree)
             n_decoy += (not decoy_agree)
-            tie = label_pass(
-                [r], ctx, stem_counts, STRONG)
-            pick = tie.get(txn, a)
-            labels[txn] = {**pick, "agree": False,
-                           "pass1": a["category"], "pass2": b["category"]}
+            disputed.append((r, a, b))
+
+        # ONE batched tie-break call for all disputed rows of the scenario
+        if disputed:
+            listing = "\n".join(
+                f"{r['txn_id']} | {r['date']} | {r['counterparty']} | {r['description']} "
+                f"| {r['amount']} | candidate A: {a['category']}(decoy={a['is_decoy']}) "
+                f"| candidate B: {b['category']}(decoy={b['is_decoy']})"
+                for r, a, b in disputed)
+            tie_prompt = PROMPT.format(
+                company=ctx["company"], industry=ctx["industry"],
+                taxonomy="\n".join(f"- {t}" for t in TAXONOMY),
+                ownership=json.dumps(ctx["ownership"], ensure_ascii=False),
+                threshold_quote=ctx["threshold_quote"] or "[not stated]",
+                subsidiaries=json.dumps(ctx["subsidiaries"], ensure_ascii=False),
+                perimeter_quote=ctx["perimeter_quote"] or "[not stated]",
+                rows=listing,
+            ) + ("\n\nTwo previous passes disagreed on these rows (their candidate labels "
+                 "are shown). Decide the final label for each row.")
+            tie = generate(tie_prompt, model=STRONG, schema=ROW_SCHEMA)
+            tie_by_id = {x["txn_id"]: x for x in tie["labels"]}
+            for r, a, b in disputed:
+                pick = tie_by_id.get(r["txn_id"], a)
+                labels[r["txn_id"]] = {**pick, "agree": False,
+                                       "pass1": a["category"], "pass2": b["category"]}
         out[sid] = labels
-        print(f"{sid}: {len(rows)} rows, {n_cat} category / {n_decoy} decoy disagreements")
+        print(f"{sid}: {len(rows)} rows, {n_cat} category / {n_decoy} decoy disagreements"
+              f" -> 1 batched tie-break call")
 
     (REPO / "artifacts" / "categorized_ledger.json").write_text(
         json.dumps(out, indent=1, ensure_ascii=False))
