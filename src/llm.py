@@ -22,14 +22,39 @@ REPO = Path(__file__).resolve().parent.parent
 CACHE = REPO / "artifacts" / "llm_cache"
 SPEND = REPO / "artifacts" / "llm_spend.json"
 
-STRONG = "gpt-5"
-CHEAP = "gpt-5-mini"
+# Provider selection: LLM_PROVIDER in .env/env = "openai" (default) | "deepseek".
+# Vision calls always go to OpenAI (DeepSeek has no vision); everything else
+# follows the selected provider. Cache keys include the model name, so switching
+# providers never poisons cached results.
+def _provider() -> str:
+    return (os.environ.get("LLM_PROVIDER")
+            or _env_file_get("LLM_PROVIDER") or "openai").lower()
 
-# $ per 1M tokens (input, output)
+
+def _env_file_get(key: str):
+    env_path = Path(__file__).resolve().parent.parent / ".env"
+    if env_path.exists():
+        for line in env_path.read_text().splitlines():
+            if line.startswith(f"{key}="):
+                return line.split("=", 1)[1].strip()
+    return None
+
+
+_TIERS = {
+    "openai": {"strong": "gpt-5", "cheap": "gpt-5-mini"},
+    "deepseek": {"strong": "deepseek-v4-pro", "cheap": "deepseek-v4-flash"},
+}
+STRONG = _TIERS[_provider()]["strong"]
+CHEAP = _TIERS[_provider()]["cheap"]
+VISION = "gpt-5"  # deepseek has no vision models
+
+# $ per 1M tokens (input, output); deepseek v4 figures are estimates
 PRICES = {
     "gpt-5": (1.25, 10.0),
     "gpt-5-mini": (0.25, 2.0),
     "gpt-5-nano": (0.05, 0.40),
+    "deepseek-v4-pro": (0.60, 2.40),
+    "deepseek-v4-flash": (0.10, 0.40),
 }
 
 GEMINI_POOL = [
@@ -54,12 +79,21 @@ def _env(key: str):
     return val
 
 
-def _openai():
-    global _openai_client
-    if _openai_client is None:
-        from openai import OpenAI
-        _openai_client = OpenAI(api_key=_env("OPENAI_API_KEY"))
-    return _openai_client
+_clients = {}
+
+
+def _client_for(model: str):
+    """OpenAI-compatible client for the model's provider."""
+    from openai import OpenAI
+    if model.startswith("deepseek"):
+        if "deepseek" not in _clients:
+            _clients["deepseek"] = OpenAI(
+                api_key=_env("DEEPSEEK_API_KEY"),
+                base_url="https://api.deepseek.com")
+        return _clients["deepseek"]
+    if "openai" not in _clients:
+        _clients["openai"] = OpenAI(api_key=_env("OPENAI_API_KEY"))
+    return _clients["openai"]
 
 
 def _gemini():
@@ -98,23 +132,32 @@ def _cache_key(model: str, prompt: str, img_hash: str, schema) -> Path:
 
 
 def _call_openai(model, prompt, images, schema, reasoning_effort):
+    if images:
+        model = VISION  # only OpenAI serves vision
+    is_deepseek = model.startswith("deepseek")
+
     content = []
     for p in images or []:
         b64 = base64.b64encode(Path(p).read_bytes()).decode()
         mime = "image/png" if str(p).endswith(".png") else "image/jpeg"
         content.append({"type": "image_url",
                         "image_url": {"url": f"data:{mime};base64,{b64}"}})
-    content.append({"type": "text", "text": prompt})
+    text_part = prompt
+    if schema and is_deepseek:
+        # deepseek: json_object mode + schema stated in the prompt
+        text_part += ("\n\nRespond with a single JSON object matching this "
+                      "JSON Schema exactly:\n" + json.dumps(schema))
+    content.append({"type": "text", "text": text_part})
 
     kwargs = {}
-    if reasoning_effort:
+    if reasoning_effort and not is_deepseek:
         kwargs["reasoning_effort"] = reasoning_effort
     if schema:
-        kwargs["response_format"] = {
-            "type": "json_schema",
-            "json_schema": {"name": "result", "schema": schema, "strict": False},
-        }
-    resp = _openai().chat.completions.create(
+        kwargs["response_format"] = (
+            {"type": "json_object"} if is_deepseek else
+            {"type": "json_schema",
+             "json_schema": {"name": "result", "schema": schema, "strict": False}})
+    resp = _client_for(model).chat.completions.create(
         model=model, messages=[{"role": "user", "content": content}], **kwargs)
     u = resp.usage
     _record_spend(model, u.prompt_tokens, u.completion_tokens)

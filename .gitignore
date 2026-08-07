@@ -1,5 +1,8 @@
-documents/
-artifacts/
-submission.json
+*.pyc
+.DS_Store
 .env
 .venv/
+__pycache__/
+artifacts/
+documents/
+submission.json
