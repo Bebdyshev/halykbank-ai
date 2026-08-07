@@ -88,8 +88,9 @@ def _client_for(model: str):
     from openai import OpenAI
     if model.startswith("deepseek"):
         if "deepseek" not in _clients:
+            key = _env("DEEPSEEK_API_KEY_ACTIVE") or _env("DEEPSEEK_API_KEY")
             _clients["deepseek"] = OpenAI(
-                api_key=_env("DEEPSEEK_API_KEY"),
+                api_key=key,
                 base_url="https://api.deepseek.com",
                 timeout=180.0, max_retries=2)
         return _clients["deepseek"]
@@ -270,6 +271,16 @@ def generate(prompt, model: str = STRONG, schema: dict = None, images: list = No
             except Exception as e:  # noqa: BLE001
                 last = e
                 msg = str(e)
+                # primary deepseek key dead (auth/balance)? rotate to backup once
+                if model.startswith("deepseek") \
+                        and any(c in msg for c in ("401", "402", "Insufficient",
+                                                   "invalid_api_key", "exceeded your"))\
+                        and _env("DEEPSEEK_API_KEY_BACKUP") \
+                        and os.environ.get("DEEPSEEK_API_KEY_ACTIVE") is None:
+                    os.environ["DEEPSEEK_API_KEY_ACTIVE"] = _env("DEEPSEEK_API_KEY_BACKUP")
+                    _clients.pop("deepseek", None)
+                    print("  [llm] deepseek primary key failed -> rotated to backup key")
+                    continue
                 if any(c in msg for c in ("429", "500", "503", "overloaded",
                                           "Connection", "timeout", "Timeout")):
                     time.sleep(2 ** attempt * 3)

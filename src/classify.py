@@ -158,6 +158,32 @@ def main() -> None:
     out = REPO / "artifacts" / "doc_index.json"
     out.write_text(json.dumps(index, indent=1, ensure_ascii=False))
 
+    # EARLY DATASET SANITY CHECK - fail loudly at minute 8, not minute 40
+    problems = []
+    for sid in sorted(valid_sids):
+        active = [k for k, v in index.items()
+                  if v["doc_type"] == "loan_agreement" and v["authority"] == "active"
+                  and v["scenario_id"] == sid]
+        kyc = [k for k, v in index.items()
+               if v["doc_type"] == "kyc_dossier" and v["scenario_id"] == sid]
+        audit = [k for k, v in index.items()
+                 if v["doc_type"] in ("audit_report", "treasury_memo")
+                 and v["authority"] != "draft" and v["scenario_id"] == sid]
+        if len(active) != 1:
+            problems.append(f"{sid}: {len(active)} active agreements (expected 1): {active}")
+        if not kyc:
+            problems.append(f"{sid}: no KYC dossier")
+        if not audit:
+            problems.append(f"{sid}: no final audit/treasury doc")
+    if problems:
+        print("!" * 70)
+        print("DATASET SANITY WARNINGS - inspect before trusting downstream stages:")
+        for pr in problems:
+            print("  !!", pr)
+        print("!" * 70)
+    else:
+        print("dataset sanity check: OK (1 active agreement, KYC, audit per scenario)")
+
     by_type = Counter((v["doc_type"], v["authority"]) for v in index.values())
     print("doc types:", dict(by_type.most_common()))
     for t, a in [("loan_agreement", "active"), ("loan_agreement", "superseded"),

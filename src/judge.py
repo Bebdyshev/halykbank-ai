@@ -98,13 +98,32 @@ SOLVER_SCHEMA = {
 }
 
 
-def fallback_solve(sid, clause, quote, facts_sf, rows):
+def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=3):
+    """The fallback solver is the least deterministic piece of the pipeline
+    (rehearsal showed its cells flip between runs). Majority vote on status,
+    median actual within the majority, modal evidence."""
+    results = []
+    for i in range(samples):
+        r = dict(fallback_solve(sid, clause, quote, facts_sf, rows, sample=i))
+        results.append(r)
+    from collections import Counter
+    status = Counter(r["status"] for r in results).most_common(1)[0][0]
+    winners = [r for r in results if r["status"] == status]
+    actuals = sorted(abs(r["actual"]) for r in winners)
+    actual = actuals[len(actuals) // 2]
+    ev = Counter(r["evidence_txn_id"] for r in winners).most_common(1)[0][0]
+    return {"status": status, "actual": actual, "evidence_txn_id": ev,
+            "reasoning": f"vote {len(winners)}/{samples}: " + winners[0]["reasoning"]}
+
+
+def fallback_solve(sid, clause, quote, facts_sf, rows, sample=0):
     eff = []
     for r in rows:
         cat = facts_sf["categories"].get(r["txn_id"])
         eff.append(f"{r['txn_id']} | {r['date']} | {r['counterparty']} | "
                    f"{r['description']} | {r['amount']} | {r['currency']} | cat={cat}")
     prompt = (
+        f"(independent attempt #{sample + 1}) "
         "Independently compute this covenant cell end-to-end. Show your arithmetic in "
         "'reasoning' and output the final status/actual/evidence. actual = the metric's "
         "value (positive, 2 decimals; ratios as plain numbers). Status decided on the "
@@ -399,8 +418,8 @@ def main() -> None:
                 if unmodeled:
                     spec = next(c for c in facts["covenants"][sid]["clauses"]
                                 if c["clause"] == clause)
-                    solved = fallback_solve(sid, clause, spec.get("quote", ""),
-                                            trails[sid]["facts"], ledger[sid])
+                    solved = fallback_solve_voted(sid, clause, spec.get("quote", ""),
+                                                  trails[sid]["facts"], ledger[sid])
                     eng = answers.get(sid, {}).get(clause)
                     if eng is None or solved["status"] != eng["status"]:
                         answers.setdefault(sid, {})[clause] = {
@@ -435,7 +454,7 @@ def main() -> None:
                              .get("clauses", []) if c["clause"] == clause), None)
                 quote = (spec or {}).get("quote", f"clause {clause}")
                 sf = trails.get(sid, {}).get("facts") or {"categories": {}}
-                solved = fallback_solve(sid, clause, quote, sf, ledger[sid])
+                solved = fallback_solve_voted(sid, clause, quote, sf, ledger[sid])
                 answers.setdefault(sid, {})[clause] = {
                     "status": solved["status"],
                     "actual": round(abs(solved["actual"]), 2),

@@ -270,7 +270,12 @@ def main() -> None:
             # the category-based definition (only confident entries)
             cmap = composition.get(sid, {}).get(clause, {})
             for name, m in cmap.items():
-                if name in comp_defs and m.get("confident", True):
+                if name not in comp_defs or not m.get("confident", True):
+                    continue
+                # ADOPTION GATE: an explicit membership list is just another
+                # opinion unless the auditor's own stated figure confirms it
+                # to the cent. Unconfirmed divergence goes to the judge.
+                if m.get("stated_confirmed"):
                     valid = {r["txn_id"] for r in ledger[sid]}
                     ids = [t for t in m["txn_ids"] if t in valid]
                     if len(ids) < len(m["txn_ids"]):
@@ -279,6 +284,11 @@ def main() -> None:
                                                 f"{set(m['txn_ids']) - valid}"})
                     comp_defs[name]["txn_ids"] = ids
                     comp_defs[name]["off_ledger_ids"] = m.get("off_ledger_ids", [])
+                else:
+                    flags.append({"scenario": sid, "type": "composition_divergence",
+                                  "detail": f"{clause}/{name}: composed "
+                                            f"{m.get('composed_sum')} unconfirmed "
+                                            "(category-based value kept)"})
             covenant = {
                 "components": comp_defs,
                 "formula": clause_spec["formula"],

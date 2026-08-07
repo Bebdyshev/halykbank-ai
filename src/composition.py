@@ -219,12 +219,22 @@ def build_for_scenario(sid, facts, categories, ledger, scenario_facts):
 
     comp_map = {}
     for cl in result.get("clauses", []):
-        comp_map[cl["clause"]] = {
-            c["name"]: {"txn_ids": c["txn_ids"],
-                        "off_ledger_ids": c["off_ledger_ids"],
-                        "basis_quote": c["basis_quote"],
-                        "confident": c["confident"]}
-            for c in cl.get("components", [])}
+        entry = {}
+        for c in cl.get("components", []):
+            composed = _component_sum(c["txn_ids"], c["off_ledger_ids"],
+                                      rows_by_id, fills, fx, off_by_id)
+            s = _match_stated(c["name"], stated)
+            entry[c["name"]] = {
+                "txn_ids": c["txn_ids"],
+                "off_ledger_ids": c["off_ledger_ids"],
+                "basis_quote": c["basis_quote"],
+                "confident": c["confident"],
+                "composed_sum": composed,
+                "stated_confirmed": bool(
+                    s is not None and abs(composed - s["amount_usd"]) <= 0.01),
+                "stated_figure": s["amount_usd"] if s else None,
+            }
+        comp_map[cl["clause"]] = entry
     return comp_map, flags
 
 
