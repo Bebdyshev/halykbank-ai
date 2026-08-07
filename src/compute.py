@@ -24,11 +24,40 @@ related-party/KYC-linked, corrected) - never ordinary contributors.
 import ast
 import operator
 
+
+class NegativeDenominator(Exception):
+    """A ratio's denominator evaluated to <= 0 - the metric sign is meaningless
+    and a signed comparison would silently auto-pass caps. Callers must treat
+    the cell as broken, not COMPLIANT."""
+
+
+class EmptyComponent(Exception):
+    """A component resolved to no categories and no explicit txn list."""
+
 DEFAULT_PERIOD = ("0000-01-01", "9999-12-31")  # fallback: no date filtering
 
 _OPS = {ast.Add: operator.add, ast.Sub: operator.sub,
         ast.Mult: operator.mul, ast.Div: operator.truediv,
         ast.USub: operator.neg, ast.UAdd: operator.pos}
+
+
+def _check_denominators(node, names):
+    """Walk the AST; any division's right side must evaluate > 0."""
+    if isinstance(node, ast.Expression):
+        _check_denominators(node.body, names)
+    elif isinstance(node, ast.BinOp):
+        _check_denominators(node.left, names)
+        _check_denominators(node.right, names)
+        if isinstance(node.op, ast.Div):
+            d = _eval_expr(node.right, names)
+            if d <= 0:
+                raise NegativeDenominator(
+                    f"denominator evaluates to {d}")
+    elif isinstance(node, ast.UnaryOp):
+        _check_denominators(node.operand, names)
+    elif isinstance(node, ast.Call):
+        for a in node.args:
+            _check_denominators(a, names)
 
 
 def _eval_expr(node, names):
@@ -49,7 +78,9 @@ def _eval_expr(node, names):
 
 
 def eval_formula(formula: str, names: dict) -> float:
-    return _eval_expr(ast.parse(formula, mode="eval"), names)
+    tree = ast.parse(formula, mode="eval")
+    _check_denominators(tree, names)
+    return _eval_expr(tree, names)
 
 
 def effective_rows(rows, facts, revert_txn=None):
@@ -67,8 +98,8 @@ def effective_rows(rows, facts, revert_txn=None):
     out = []
     for row in rows:
         txn = row["txn_id"]
-        if txn in excl:
-            continue
+        if txn in excl and txn != revert_txn:
+            continue  # reverting an exclusion puts the row back (flip test)
         amount = row["amount"] if row["amount"] is not None else fills.get(txn)
         if amount is None:
             continue  # empty cell with no documented fill: unusable (flagged upstream)
@@ -80,13 +111,15 @@ def effective_rows(rows, facts, revert_txn=None):
         category = cats.get(txn)
         if txn in reclass and txn != revert_txn:
             category = reclass[txn]
-        if txn == revert_txn and txn not in reclass:
+        if txn == revert_txn and txn not in reclass and txn not in excl:
             continue  # revert an inclusion-type fact by dropping the txn
         out.append((txn, row["date"], abs(amount), category))
     return out
 
 
 def component_value(eff_rows, spec, off_ledger, covenant_period):
+    if not spec.get("categories") and spec.get("txn_ids") is None:
+        raise EmptyComponent("component has neither categories nor txn_ids")
     start, end = spec.get("period") or covenant_period
     if spec.get("txn_ids") is not None:
         # explicit membership (auditor-specific composition map): sum exactly
@@ -154,11 +187,15 @@ def compute_cell(covenant, rows, facts) -> dict:
     status = _status(value, covenant, _condition_value(covenant, rows, facts))
 
     evidence = None
+    candidates = []
     if status == "BREACH":
         reclassed = [r["txn_id"] for r in facts.get("reclassifications", [])]
         related = [t for t in facts.get("related_party_txns", []) if t not in reclassed]
         filled = [t for t in facts.get("amount_fills", {}) if t not in reclassed + related]
-        for candidate in reclassed + related + filled:
+        excluded = [t for t in facts.get("exclusions", [])
+                    if t not in reclassed + related + filled]
+        candidates = reclassed + related + filled + excluded
+        for candidate in candidates:
             v2, _ = _metric(covenant, rows, facts, revert_txn=candidate)
             s2 = _status(v2, covenant,
                          _condition_value(covenant, rows, facts, revert_txn=candidate))
@@ -174,6 +211,7 @@ def compute_cell(covenant, rows, facts) -> dict:
             "raw_metric": value,
             "components": components,
             "threshold": covenant["threshold"],
+            "evidence_candidates": candidates,
             "margin_pct": (
                 None if covenant["threshold"]["value"] == 0
                 else (value - covenant["threshold"]["value"])

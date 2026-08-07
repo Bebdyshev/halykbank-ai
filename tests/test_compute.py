@@ -344,6 +344,58 @@ def test_component_explicit_ids_respect_adjustments():
 
 
 
+
+
+# --- package A guards -------------------------------------------------------
+def test_negative_denominator_raises():
+    import compute
+    rows = [row("TXN-X7-0001", 1_000_000.00), row("TXN-X7-0002", -3_000_000.00)]
+    facts = {"categories": {"TXN-X7-0001": "REVENUE", "TXN-X7-0002": "OPEX"}}
+    covenant = {
+        "components": {"revenue": {"categories": ["REVENUE"]},
+                       "opex": {"categories": ["OPEX"]}},
+        "formula": "revenue / (revenue - opex)",
+        "threshold": {"op": "<=", "value": 0.30, "strict": True},
+    }
+    try:
+        compute_cell(covenant, rows, facts)
+        assert False, "should have raised"
+    except compute.NegativeDenominator:
+        pass
+
+
+def test_empty_component_raises():
+    import compute
+    rows = [row("TXN-X8-0001", 1_000_000.00)]
+    facts = {"categories": {"TXN-X8-0001": "REVENUE"}}
+    covenant = {
+        "components": {"ebitda": {"categories": []}},
+        "formula": "ebitda",
+        "threshold": {"op": ">=", "value": 1.0, "strict": True},
+    }
+    try:
+        compute_cell(covenant, rows, facts)
+        assert False, "should have raised"
+    except compute.EmptyComponent:
+        pass
+
+
+def test_exclusion_can_be_evidence():
+    rows = [row("TXN-X9-0001", 6_000_000.00), row("TXN-X9-0045", 1_500_000.00)]
+    facts = {"categories": {"TXN-X9-0001": "REVENUE", "TXN-X9-0045": "REVENUE"},
+             "exclusions": ["TXN-X9-0045"]}
+    covenant = {
+        "components": {"revenue": {"categories": ["REVENUE"]}},
+        "formula": "revenue",
+        "threshold": {"op": ">=", "value": 7_000_000.00, "strict": True},
+    }
+    r = compute_cell(covenant, rows, facts)
+    # excluding 0045 leaves 6.0M < 7.1M floor -> BREACH; putting it back gives
+    # 7.5M -> COMPLIANT, so the exclusion is the verdict-flipping fact
+    assert r["status"] == "BREACH"
+    assert r["evidence_txn_id"] == "TXN-X9-0045"
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]

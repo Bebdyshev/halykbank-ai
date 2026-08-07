@@ -3,11 +3,12 @@
 # scripts/score.py (which reads ground_truth.json) is NOT invoked here - run it
 # separately, once, as the final measurement.
 set -e
+set -o pipefail  # a stage dying mid-pipe must halt the run
 cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 
 echo "== wiping derived artifacts (keeping llm_cache + parsed_docs/ocr) =="
-rm -f artifacts/{doc_index,scenario_meta,facts,categorized_ledger,answers,answers_judged,audit_trails,flags,judge_report,composition,composition_flags}.json
+rm -f submission.json artifacts/{doc_index,scenario_meta,facts,categorized_ledger,answers,answers_judged,audit_trails,flags,judge_report,composition,composition_flags}.json
 
 echo "== S0 ledger =="        && $PY src/ledger.py
 echo "== S1 ingest =="        && $PY src/ingest.py | tail -2

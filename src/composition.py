@@ -147,8 +147,10 @@ def _match_stated(comp_name, stated):
         "payroll": ["оплат", "персонал", "payroll", "фонд"],
         "capex": ["капитальн", "capex"],
     }
-    keys = [k for k, words in aliases.items() if any(w in comp_name.lower() for w in [k])]
-    words = aliases.get(keys[0] if keys else comp_name.lower(), [comp_name.lower()])
+    lname = comp_name.lower()
+    keys = [k for k, words in aliases.items()
+            if k in lname or any(w in lname for w in words)]
+    words = aliases[keys[0]] if keys else [lname]
     for s in stated:
         if any(w in s["metric_name"].lower() for w in words):
             return s
@@ -203,7 +205,6 @@ def build_for_scenario(sid, facts, categories, ledger, scenario_facts):
                     comp=comp["name"], clause=cl["clause"],
                     metric=s["metric_name"], target=s["amount_usd"], got=got),
                 model=STRONG, schema=SCHEMA, reasoning_effort="high")
-            result = repaired
             comp2 = next(
                 (c for rc in repaired.get("clauses", [])
                  if rc["clause"] == cl["clause"]

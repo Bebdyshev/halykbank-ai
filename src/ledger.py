@@ -44,8 +44,13 @@ def load() -> tuple:
                 n_decoy += 1
                 continue
             row["amount"] = float(row["amount"]) if row["amount"].strip() else None
+            if not re.match(r"^\d{4}-\d{2}-\d{2}$", row.get("date", "")):
+                raise SystemExit(
+                    f"NON-ISO DATE {row.get('date')!r} in {row['txn_id']}: "
+                    "period filters compare dates as strings - normalize first")
+            row.setdefault("currency", "USD")
             rows_by_scenario[sid].append(row)
-            accounts.setdefault(sid, row["account_id"])
+            accounts.setdefault(sid, row.get("account_id", f"ACC-{sid}"))
     return rows_by_scenario, accounts, n_total, n_decoy
 
 

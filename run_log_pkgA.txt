@@ -1,0 +1,109 @@
+== wiping derived artifacts (keeping llm_cache + parsed_docs/ocr) ==
+== S0 ledger ==
+total 1473 rows: 673 real / 800 decoy
+accounts: {'P1': 'ACC-7801', 'P4': 'ACC-7804', 'P6': 'ACC-7806', 'P8': 'ACC-7808', 'B1': 'ACC-7201', 'P7': 'ACC-7807', 'B4': 'ACC-7204', 'P10': 'ACC-7810', 'P2': 'ACC-7802', 'P3': 'ACC-7803', 'P5': 'ACC-7805', 'P9': 'ACC-7809'}
+EMPTY-AMOUNT rows (values live in PDFs): [('P8', 'TXN-P8-0031'), ('P7', 'TXN-P7-0033')]
+non-USD rows: 15: [('P2', 'TXN-P2-0008'), ('P3', 'TXN-P3-0024'), ('P8', 'TXN-P8-0041'), ('P8', 'TXN-P8-0025'), ('P9', 'TXN-P9-0038'), ('B4', 'TXN-B4-0049'), ('P10', 'TXN-P10-0057'), ('P1', 'TXN-P1-0049'), ('P1', 'TXN-P1-0005'), ('P1', 'TXN-P1-0018'), ('P6', 'TXN-P6-0042'), ('B1', 'TXN-B1-0038'), ('B1', 'TXN-B1-0050'), ('P5', 'TXN-P5-0047'), ('P7', 'TXN-P7-0051')]
+== S1 ingest ==
+ingested 200 PDFs -> /Users/bebdyshev/Documents/Github/halykbank-ai/artifacts/parsed_docs
+docs with OCR-needed pages: 4
+== S1b ocr ==
+f3fa6d20c8a1 p3: 1155 chars
+OCR done: 6 pages across 4 docs spliced into parsed_docs/
+== S2 classify ==
+doc types: {('other', 'n_a'): 102, ('other', 'draft'): 33, ('audit_report', 'final'): 13, ('loan_agreement', 'active'): 12, ('loan_agreement', 'superseded'): 12, ('other', 'active'): 8, ('kyc_dossier', 'final'): 6, ('kyc_dossier', 'n_a'): 6, ('audit_report', 'draft'): 6, ('treasury_memo', 'n_a'): 1, ('group_financials', 'final'): 1}
+loan_agreement/active (12): {'1d262694c308': 'P5', '3a4aa2dbd6c4': 'P4', '61dfc54675dc': 'P8', '6acb5bbc3e70': 'P7', '85afaaca89ad': 'P3', '8d878af064f2': 'P1', 'b2519c8e3ea4': 'P2', 'b38facf69a94': 'B1', 'ba475cfc33a4': 'P10', 'bc5451f75caf': 'B4', 'be7c1bba8940': 'P6', 'c2c9382c9168': 'P9'}
+loan_agreement/superseded (12): {'3c7841365bf3': 'P6', '5f1aff0e8590': 'P2', '6dd84ab9ef0e': 'P1', '832e580c962f': 'P9', 'a2ca5ce24acb': 'P10', 'aaff7bd53ea8': 'P4', 'ad991140ab81': 'P7', 'b084add0e80a': 'B1', 'c10ebf055fa5': 'P5', 'e16b5e6532b5': 'B4', 'edfab0e95f79': 'P8', 'ffb3a98e3733': 'P3'}
+kyc_dossier/* (12): {'07e1a2a0275d': 'P10', '22c1707dad45': 'P8', '2bdb134db53c': 'P7', '2dd8671ac405': 'P1', '63e162bd710b': 'P2', '89af6ae7964f': 'P5', '9f1a89a5ed42': 'P4', 'a144690a213c': 'B4', 'aaf665cbc612': 'P9', 'c66b5b638410': 'B1', 'ee32532e1126': 'P3', 'f3fa6d20c8a1': 'P6'}
+audit_report/final (13): {'2ed0b2ee4b57': 'P4', '3963dfb04b2a': 'P6', '3fd0d34546b5': 'P2', '448b59e12768': 'B1', '4db1d630055f': 'P10', '596a5d8b04f5': 'P7', '6f1c06f8479a': 'P3', '7903e7d18e94': 'P9', '896b7933db48': 'P1', 'a16d7a619f87': 'B1', 'bf9b7bffc514': 'P8', 'e334c4d4d3ea': 'B4', 'ea8d8bac3e62': 'P5'}
+audit_report/draft (6): {'265c91f8f86c': 'P9', '2762d1c605e6': 'B1', '4a08260debe0': '?', '6387d5cd9c00': 'P8', 'a81217cea0a1': 'P3', 'b5ccff3af55d': 'P6'}
+treasury_memo/* (1): {'26acfab1e58b': 'P7'}
+group_financials/* (1): {'a5cc1400b640': '?'}
+== S2b scenario meta ==
+P6 -> Taraz Cement Works JSC
+B4 -> Shymkent Refinery JSC
+P9 -> Zhezkazgan Mining Services JSC
+== S3 extract ==
+  covenant passes disagree for P6 -> arbiter
+kyc: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+audit: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+covenants: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+group: ['P5']
+== S4 categorize ==
+P5: 54 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P10: 59 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P2: 56 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P4: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+B1: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P3: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P1: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+B4: 57 rows, 3 category / 3 decoy disagreements -> 1 batched tie-break call
+P8: 55 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P6: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P9: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P7: 56 rows, 6 category / 6 decoy disagreements -> 1 batched tie-break call
+== S4b composition ==
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+P1: composition for 3 clauses / 5 components
+P4: composition for 3 clauses / 5 components
+P10: composition for 3 clauses / 8 components
+P5: composition for 3 clauses / 5 components
+P6: composition for 3 clauses / 6 components
+P3: composition for 3 clauses / 4 components
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+B4: composition for 3 clauses / 3 components
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+P7: composition for 3 clauses / 5 components
+P8: composition for 3 clauses / 5 components
+P9: composition for 3 clauses / 4 components
+== S5 compute ==
+  FLAG [P6] composition_divergence: 6.2/revenue: composed 6918204.37 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.2/payroll: composed 1482663.19 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.2/utilities: composed 418204.37 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.3/capex: composed 1482663.28 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/taxes: composed 888322.83 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/communal_expenses: composed 91447.35 unconfirmed (category-based value kept)
+  FLAG [P7] empty_component: 6.1: component has neither categories nor txn_ids
+  FLAG [P7] composition_divergence: 6.2/revenue: composed 9146882.53 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.3/related_party_payments: composed 291663.82 unconfirmed (category-based value kept)
+  FLAG [P7] unmodeled_condition: 6.3: Exception: any amounts explicitly approved in writing by the Lender are excluded from the cap.
+  FLAG [P8] composition_divergence: 6.1/payroll_expenses: composed 3302867.43 unconfirmed (category-based value kept)
+  FLAG [P8] composition_divergence: 6.1/personnel_obligation: composed 918447.52 unconfirmed (category-based value kept)
+  FLAG [P8] empty_component: 6.1: component has neither categories nor txn_ids
+  FLAG [P8] composition_divergence: 6.2/capex: composed 1918204.36 unconfirmed (category-based value kept)
+  FLAG [P8] composition_divergence: 6.3/revenue: composed 7884663.19 unconfirmed (category-based value kept)
+  FLAG [P9] kyc_rule_enforced: TXN-P9-0017: Zhezkazgan Conveyor Assets LLP pledged 87.6% -> restricted, transfer excluded (CAPEX)
+  FLAG [P9] empty_component: 6.1: component has neither categories nor txn_ids
+  FLAG [P9] composition_divergence: 6.2/revenue: composed 8442118.53 unconfirmed (category-based value kept)
+  FLAG [P9] composition_divergence: 6.3/related_party_payments: composed 268447.19 unconfirmed (category-based value kept)
+  FLAG [P9] unmodeled_condition: 6.3: The term 'Ограниченные платежи' (Restricted Payments) is not explicitly defined; the engine inc
+== S6 judge ==
+  P3/6.1: decoy rehab DENIED TXN-P3-0025 (stays NOISE)
+  P3/6.1: decoy rehab DENIED TXN-P3-0030 (stays NOISE)
+  P3/6.1: fallback solver override (vote 2/3: Total financing inflows = $5,442,118.93 (TXN-P3-0002). This exceeds $4,000,000, so the test applies. EBITDA = )
+  round1 P4/6.1: disagree - false_decoy:These excluded rows have descriptions strongly indicative of operating expenses 
+  P4/6.1: decoy rehab DENIED TXN-P4-0013 (stays NOISE)
+  P4/6.1: decoy rehab DENIED TXN-P4-0010 (stays NOISE)
+  P4/6.1: decoy rehab DENIED TXN-P4-0022 (stays NOISE)
+  P4/6.1: decoy rehab DENIED TXN-P4-0046 (stays NOISE)
+  round1 P6/6.1: disagree - suspect_category:The clause requires including all payments to related parties regardless of expe
+  round1 P7/6.1: disagree - wrong_formula:EBITDA was not properly defined or computed. The engine spec had an empty defini
+  P7/6.1: re-extracted covenants (EBITDA was not properly defined or computed. The engine spec had an empty definition for EBITDA, cau)
+  round1 P8/6.1: agree - 
+  round1 P9/6.1: disagree - unmodeled_rule_material:Component transfers_to_unrestricted_subs has no categories or logic to identify ; suspect_category:TXN-P9-0017
+  P9/6.1: relabeled TXN-P9-0017 -> SUBSIDIARY_TRANSFER
+  P9/6.1: fallback solver override (vote 3/3: Числитель: совокупная стоимость капитальных активов, переданных неограниченным дочерним организациям. Единстве)
+  round2 P1/6.2: disagree - evidence_invalid:The evidence transaction TXN-P1-0031 is a related party payment and does not aff
+  round2 P4/6.1: disagree - false_decoy:These excluded rows have descriptions strongly indicative of operating expenses 
+  round2 P6/6.1: disagree - suspect_category:The clause requires including all payments to related parties regardless of expe
+  round2 P7/6.1: disagree - wrong_formula:The denominator EBITDA is computed as (revenue - opex) from only REVENUE and OPE; false_decoy:TXN-P7-0012 is a large pay
+  P7/6.1: re-extracted covenants (The denominator EBITDA is computed as (revenue - opex) from only REVENUE and OPEX categories, but EB)
+  P7/6.1: decoy rehab DENIED TXN-P7-0012 (stays NOISE)
+  round2 P8/6.1: agree - 
+  round2 P9/6.1: disagree - unmodeled_rule_material:The machine specification for component transfers_to_unrestricted_subs defines c
+  P7/6.1: filled by fallback solver
+  P8/6.1: filled by fallback solver
+== S7 assemble ==
+WROTE submission.json with 1 VALIDATION ERRORS:
+  - P8/6.1: evidence 'TXN-P8-0005, TXN-P8-0031, off_ledger:Совокупное обязательство по программе выходных пособий' malformed

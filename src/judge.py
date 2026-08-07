@@ -24,7 +24,7 @@ from llm import STRONG, generate, pmap  # noqa: E402
 REPO = Path(__file__).resolve().parent.parent
 ART = REPO / "artifacts"
 ROUNDS = 2
-NEAR_LIMIT_PCT = 2.5
+NEAR_LIMIT_PCT = 5.0
 
 JUDGE_SCHEMA = {
     "type": "object",
@@ -98,6 +98,19 @@ SOLVER_SCHEMA = {
 }
 
 
+def _sane_evidence(ev, rows):
+    """Collapse whatever the solver returned to ONE valid ledger txn id (or None)."""
+    if not ev:
+        return None
+    valid = {r["txn_id"] for r in rows}
+    if ev in valid:
+        return ev
+    for tok in __import__("re").findall(r"[A-Za-z]+-[A-Za-z0-9]+-\d+", ev):
+        if tok in valid:
+            return tok
+    return None
+
+
 def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=3):
     """The fallback solver is the least deterministic piece of the pipeline
     (rehearsal showed its cells flip between runs). Majority vote on status,
@@ -111,7 +124,8 @@ def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=3):
     winners = [r for r in results if r["status"] == status]
     actuals = sorted(abs(r["actual"]) for r in winners)
     actual = actuals[len(actuals) // 2]
-    ev = Counter(r["evidence_txn_id"] for r in winners).most_common(1)[0][0]
+    ev = Counter(_sane_evidence(r["evidence_txn_id"], rows)
+                 for r in winners).most_common(1)[0][0]
     return {"status": status, "actual": actual, "evidence_txn_id": ev,
             "reasoning": f"vote {len(winners)}/{samples}: " + winners[0]["reasoning"]}
 
@@ -163,22 +177,35 @@ def _scenario_context(sid, trails, facts, ledger, answers):
     comp_path = ART / "composition.json"
     composition = json.loads(comp_path.read_text()) if comp_path.exists() else {}
 
+    all_flags = json.loads((ART / "flags.json").read_text()) \
+        if (ART / "flags.json").exists() else []
+
     cells_fmt = []
-    for clause, cell in sorted(trails[sid]["cells"].items()):
+    for spec in sorted(facts["covenants"][sid]["clauses"],
+                       key=lambda c: c["clause"]):
+        clause = spec["clause"]
+        cell = trails[sid]["cells"].get(clause, {})
         ans = answers[sid].get(clause)
         if ans is None:
-            continue
-        spec = next(c for c in facts["covenants"][sid]["clauses"]
-                    if c["clause"] == clause)
-        margin = cell.get("margin_pct")
+            errs = "; ".join(
+                f["detail"] for f in all_flags
+                if f.get("scenario") == sid and clause in str(f.get("detail", "")))
+            engine_line = ("ENGINE RESULT: FAILED - no answer produced. "
+                           f"Errors: {errs[:400] or 'unknown'}. The machine spec is "
+                           "likely broken (empty component, bad period, sign error) - "
+                           "report concrete spec issues so it can be repaired.")
+        else:
+            margin = cell.get("margin_pct")
+            engine_line = (
+                f"ENGINE RESULT: status={ans['status']}, actual={ans['actual']}, "
+                f"evidence={ans['evidence_txn_id']}, "
+                f"margin={None if margin is None else round(margin, 2)}%")
         cells_fmt.append(
             f"--- CLAUSE {clause} ---\n"
             f"VERBATIM: {cell.get('quote') or spec.get('quote', '')}\n"
-            f"SPEC: {json.dumps({k: spec[k] for k in ('components', 'formula', 'threshold', 'condition')}, ensure_ascii=False)}\n"
-            f"COMPONENT VALUES: {json.dumps(cell['components'], ensure_ascii=False)}\n"
-            f"ENGINE RESULT: status={ans['status']}, actual={ans['actual']}, "
-            f"evidence={ans['evidence_txn_id']}, "
-            f"margin={None if margin is None else round(margin, 2)}%"
+            f"SPEC: {json.dumps({k: spec.get(k) for k in ('components', 'formula', 'threshold', 'condition')}, ensure_ascii=False)}\n"
+            f"COMPONENT VALUES: {json.dumps(cell.get('components', {}), ensure_ascii=False)}\n"
+            + engine_line
             + (f"\nAUDITOR-COMPOSITION (explicit membership used): "
                f"{json.dumps(composition[sid][clause], ensure_ascii=False)[:2000]}"
                if composition.get(sid, {}).get(clause) else ""))
@@ -202,6 +229,7 @@ def _kyc_gate_ok(sid, txn, new_lab, facts, ledger):
     threshold = kyc.get("related_party_threshold_pct")
     if threshold is None:
         return False
+    inclusive = kyc.get("threshold_inclusive", True)
     import re as _re
 
     def norm(s):
@@ -215,7 +243,8 @@ def _kyc_gate_ok(sid, txn, new_lab, facts, ledger):
     cand = norm(new_lab.get("kyc_matched_name") or "")
     for o in kyc.get("ownership", []):
         n = norm(o["name"])
-        if n and (n == cand or n in cp or cp in n) and o["pct"] >= threshold:
+        meets = o["pct"] >= threshold if inclusive else o["pct"] > threshold
+        if n and (n == cand or n in cp or cp in n) and meets:
             return True
     return False
 
@@ -223,17 +252,15 @@ def _kyc_gate_ok(sid, txn, new_lab, facts, ledger):
 def _recompute_scenario(sid, facts, categories, ledger, meta, flags):
     sf = run_all.build_scenario_facts(sid, ledger[sid], facts, categories, flags)
     period = (meta.get(sid, {}).get("covenant_period") or {})
+    composition = json.loads((ART / "composition.json").read_text()) \
+        if (ART / "composition.json").exists() else {}
     out, trail = {}, {"facts": sf, "cells": {}}
     for clause_spec in facts["covenants"][sid]["clauses"]:
-        covenant = {
-            "components": {c["name"]: c["definition"] for c in clause_spec["components"]},
-            "formula": clause_spec["formula"],
-            "threshold": clause_spec["threshold"],
-        }
-        if period.get("start") and period.get("end"):
-            covenant["period"] = [period["start"], period["end"]]
-        if clause_spec.get("condition"):
-            covenant["condition"] = clause_spec["condition"]
+        # same deterministic backstops as run_all (NOISE strip, duplicate-summand
+        # dedup, composition adoption gate, transfer-ratio, clause period) - a
+        # judge recompute must never bypass them (that leaked the P8 double-count)
+        covenant = run_all.build_covenant(sid, clause_spec, period, composition,
+                                          ledger, flags)
         try:
             r = compute_cell(covenant, ledger[sid], sf)
         except Exception as e:  # noqa: BLE001
@@ -246,7 +273,21 @@ def _recompute_scenario(sid, facts, categories, ledger, meta, flags):
     return out, trail
 
 
-def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
+def _spec_flip_guard(sid, candidate, facts, categories, ledger, answers):
+    """Statuses that would flip if `candidate` replaced the consensus covenant
+    spec. Repairing an absent cell is fine; flipping a computed one is not."""
+    meta = json.loads((ART / "scenario_meta.json").read_text())
+    trial = {**facts, "covenants": {**facts["covenants"], sid: candidate}}
+    new_ans, _ = _recompute_scenario(sid, trial, categories, ledger, meta, [])
+    flipped = []
+    for cl, old in (answers.get(sid) or {}).items():
+        new = new_ans.get(cl)
+        if old is not None and new is not None and new["status"] != old["status"]:
+            flipped.append(cl)
+    return flipped
+
+
+def _apply_issues(sid, clause, issues, facts, categories, ledger, report, answers):
     """Route judge issues to targeted re-runs. Returns True if anything changed."""
     changed = False
     spec_issues = [i for i in issues if i["type"] in
@@ -265,9 +306,16 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
             base + f"\n\nA reviewer raised these concerns about a previous extraction - "
                    f"weigh them against the text:\n{critique}",
             model=STRONG, schema=extract.COVENANT_SCHEMA, reasoning_effort="high")
-        facts["covenants"][sid] = {"doc": doc, **new_spec}
-        report.append(f"{sid}/{clause}: re-extracted covenants ({critique[:100]})")
-        changed = True
+        candidate = {"doc": doc, **new_spec}
+        flipped = _spec_flip_guard(sid, candidate, facts, categories, ledger, answers)
+        if flipped:
+            report.append(f"{sid}/{clause}: re-extraction DENIED - would flip "
+                          f"{flipped} on a single pass (consensus spec kept; "
+                          "status changes need the voted solver)")
+        else:
+            facts["covenants"][sid] = candidate
+            report.append(f"{sid}/{clause}: re-extracted covenants ({critique[:100]})")
+            changed = True
 
     decoy_rehabs = [i for i in row_issues if i["type"] == "false_decoy"]
     other_rows = [i for i in row_issues if i["type"] == "suspect_category"]
@@ -288,6 +336,25 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
                 model=STRONG, schema=categorize.ROW_SCHEMA)
             for lab in relabel["labels"]:
                 if lab["txn_id"] in wanted:
+                    cur = (categories[sid].get(lab["txn_id"]) or {}).get("category")
+                    if lab["category"] == "NOISE" and cur != "NOISE":
+                        row = next(r for r in ledger[sid]
+                                   if r["txn_id"] == lab["txn_id"])
+                        confirm = generate(
+                            "A reviewer wants to RECLASSIFY this ledger row as a "
+                            "planted decoy (NOISE), deleting it from every covenant "
+                            "metric. Presume the row is REAL unless its counterparty/"
+                            "description pair is clearly incoherent for this borrower. "
+                            "When in doubt, keep it real.\n"
+                            f"REVIEWER'S ARGUMENT: {concerns}\n"
+                            f"ROW: {json.dumps(row, ensure_ascii=False)}",
+                            model=STRONG, schema=categorize.ROW_SCHEMA)
+                        ok = any(l["txn_id"] == lab["txn_id"] and l["is_decoy"]
+                                 for l in confirm.get("labels", []))
+                        if not ok:
+                            report.append(f"{sid}/{clause}: NOISE demotion DENIED "
+                                          f"{lab['txn_id']} (presumed real)")
+                            continue
                     if not _kyc_gate_ok(sid, lab["txn_id"], lab, facts, ledger):
                         report.append(f"{sid}/{clause}: relabel DENIED by KYC gate "
                                       f"{lab['txn_id']} -/-> RELATED_PARTY")
@@ -365,6 +432,8 @@ def main() -> None:
     attention = set()
     for f in flags:
         sid = f.get("scenario")
+        if f.get("type") == "composition_divergence":
+            continue  # recorded for the log; must not flood judge attention
         if sid in template["answers"]:
             for clause in template["answers"][sid]:
                 attention.add((sid, clause))
@@ -382,6 +451,7 @@ def main() -> None:
     # ---- Stage B: judge per SCENARIO (one batched call for all its cells).
     # Verdict calls run in PARALLEL (read-only); fixes apply sequentially
     # afterwards because they mutate shared facts/categories.
+    seen_issues = set()
     for rnd in range(1, ROUNDS + 1):
         n_disagree = 0
         todo = [sid for sid in sorted(template["answers"])
@@ -397,11 +467,13 @@ def main() -> None:
             result = verdicts[sid]
             cell_verdicts = {c["clause"]: c for c in result.get("cells", [])}
             scenario_changed = False
+            pending_solves = []
             for clause in sorted(template["answers"][sid]):
                 v = cell_verdicts.get(clause)
-                if v is None or answers.get(sid, {}).get(clause) is None:
+                if v is None:
                     continue
-                if v["verdict"] == "agree":
+                if v["verdict"] == "agree" \
+                        and answers.get(sid, {}).get(clause) is not None:
                     attention.discard((sid, clause))
                     continue
                 n_disagree += 1
@@ -410,29 +482,43 @@ def main() -> None:
                     f"round{rnd} {sid}/{clause}: {v['verdict']} - "
                     + "; ".join(f"{i['type']}:{i['explanation'][:80]}"
                                 for i in v["issues"]))
-                unmodeled = [i for i in v["issues"]
-                             if i["type"] == "unmodeled_rule_material"]
-                if _apply_issues(sid, clause, v["issues"],
-                                 facts, categories, ledger, report):
+                fresh = [i for i in v["issues"]
+                         if (sid, clause, i["type"], i["explanation"][:60])
+                         not in seen_issues]
+                for i in fresh:
+                    seen_issues.add((sid, clause, i["type"], i["explanation"][:60]))
+
+                # Conservative B6 routing (measured: routing computed cells to the
+                # voted solver flipped near-limit plants P2/P5/P7 - the solver is
+                # noisier than the deterministic engine there). Spec doubts go to
+                # _apply_issues re-extraction under the flip-guard; only genuinely
+                # unmodelable rules reach the solver.
+                if [i for i in fresh if i["type"] == "unmodeled_rule_material"]:
+                    pending_solves.append(clause)
+                if fresh and _apply_issues(sid, clause, fresh,
+                                           facts, categories, ledger, report,
+                                           answers):
                     scenario_changed = True
-                if unmodeled:
-                    spec = next(c for c in facts["covenants"][sid]["clauses"]
-                                if c["clause"] == clause)
-                    solved = fallback_solve_voted(sid, clause, spec.get("quote", ""),
-                                                  trails[sid]["facts"], ledger[sid])
-                    eng = answers.get(sid, {}).get(clause)
-                    if eng is None or solved["status"] != eng["status"]:
-                        answers.setdefault(sid, {})[clause] = {
-                            "status": solved["status"],
-                            "actual": round(abs(solved["actual"]), 2),
-                            "evidence_txn_id": solved["evidence_txn_id"]}
-                        report.append(f"{sid}/{clause}: fallback solver override "
-                                      f"({solved['reasoning'][:120]})")
             if scenario_changed:
                 new_ans, new_trail = _recompute_scenario(
                     sid, facts, categories, ledger, meta, flags)
                 answers[sid] = new_ans
                 trails[sid] = new_trail
+            # solver overrides AFTER the recompute so they cannot be clobbered
+            for clause in pending_solves:
+                spec = next((c for c in facts["covenants"][sid]["clauses"]
+                             if c["clause"] == clause), None)
+                solved = fallback_solve_voted(
+                    sid, clause, (spec or {}).get("quote", ""),
+                    trails[sid]["facts"], ledger[sid])
+                eng = answers.get(sid, {}).get(clause)
+                if eng is None or solved["status"] != eng["status"]:
+                    answers.setdefault(sid, {})[clause] = {
+                        "status": solved["status"],
+                        "actual": round(abs(solved["actual"]), 2),
+                        "evidence_txn_id": solved["evidence_txn_id"]}
+                    report.append(f"{sid}/{clause}: fallback solver override "
+                                  f"({solved['reasoning'][:120]})")
         if n_disagree == 0:
             break
 
@@ -466,6 +552,8 @@ def main() -> None:
     (ART / "facts.json").write_text(json.dumps(facts, indent=1, ensure_ascii=False))
     (ART / "categorized_ledger.json").write_text(
         json.dumps(categories, indent=1, ensure_ascii=False))
+    (ART / "audit_trails.json").write_text(
+        json.dumps(trails, indent=1, ensure_ascii=False))
     (ART / "judge_report.json").write_text(
         json.dumps(report, indent=1, ensure_ascii=False))
     print(f"judge done; {len(report)} report lines")

@@ -285,7 +285,11 @@ def generate(prompt, model: str = STRONG, schema: dict = None, images: list = No
                                           "Connection", "timeout", "Timeout")):
                     time.sleep(2 ** attempt * 3)
                     continue
-                if "json" in msg.lower() and attempt < max_retries - 1:
+                if attempt < max_retries - 1 and (
+                        "json" in msg.lower()
+                        or any(s in msg for s in (
+                            "Expecting", "Unterminated", "Extra data",
+                            "Invalid control character", "delimiter"))):
                     continue
                 break
         print(f"  [llm] openai {model} failed ({str(last)[:90]}); trying gemini")

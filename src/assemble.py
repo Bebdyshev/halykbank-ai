@@ -17,7 +17,7 @@ TEMPLATE = REPO / "case-related-docs" / "submission_template.json"
 
 TEAM = "halykbank-ai"
 CONTACT = "fikret.huseynov2006@gmail.com"
-MODEL = "gpt-5"
+MODEL = __import__("os").environ.get("LLM_PROVIDER", "deepseek") + "-pipeline"
 
 # id shape derived from the actual ledger, not assumed
 def _txn_re():
@@ -51,10 +51,15 @@ def validate_cell(sid: str, clause: str, cell: dict, errors: list) -> dict:
         # cell has no such txn - normalize instead of erroring
     if ev is not None:
         m = TXN_RE.match(str(ev))
-        if not m:
-            errors.append(f"{where}: evidence {ev!r} malformed")
-        elif m.group(1) != sid:
-            errors.append(f"{where}: evidence {ev!r} belongs to wrong scenario")
+        if not m or m.group(1) != sid:
+            # salvage: first well-formed id of THIS scenario inside the string
+            salvaged = next(
+                (t for t in re.findall(r"[A-Za-z]+-[A-Za-z0-9]+-\d+", str(ev))
+                 if TXN_RE.match(t) and TXN_RE.match(t).group(1) == sid), None)
+            errors.append(f"{where}: evidence {ev!r} "
+                          + (f"salvaged -> {salvaged}" if salvaged
+                             else "malformed -> null"))
+            ev = salvaged
     return {"status": status, "actual": actual, "evidence_txn_id": ev}
 
 

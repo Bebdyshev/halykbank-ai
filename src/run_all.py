@@ -18,6 +18,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
+import compute  # noqa: E402
 from compute import compute_cell  # noqa: E402
 from llm import CHEAP, generate  # noqa: E402
 
@@ -101,8 +102,13 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
     cats, related_txns, kyc_linked = {}, [], []
     affiliate_names = set()
     threshold = kyc.get("related_party_threshold_pct")
+    # boundary semantics from the dossier's own wording («40% и более» vs
+    # «более 40%»); default inclusive = prior behaviour
+    inclusive = kyc.get("threshold_inclusive", True)
+    def _meets(pct):
+        return pct >= threshold if inclusive else pct > threshold
     for o in kyc.get("ownership", []):
-        if threshold is not None and o["pct"] >= threshold:
+        if threshold is not None and _meets(o["pct"]):
             affiliate_names.add(o["name"])
 
     # H4: the dossier's own numeric rules are LAW - enforced in code, overriding
@@ -150,16 +156,25 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
         own = ownership_entry(row, lab)
         is_payment = (row["amount"] or 0) < 0
         if own is not None and threshold is not None and lab["category"] != "NOISE":
-            if own["pct"] >= threshold and is_payment                     and lab["category"] != "RELATED_PARTY":
+            if _meets(own["pct"]) and is_payment \
+                    and lab["category"] == "SUBSIDIARY_TRANSFER":
+                # an entity can sit in BOTH tables; the transfers covenant has
+                # its own perimeter logic - do not hijack, let the judge decide
+                flags.append({"scenario": sid, "type": "related_vs_transfer_conflict",
+                              "detail": f"{txn}: {own['name']} {own['pct']}% is also "
+                                        "a subsidiary transfer - kept as transfer"})
+            elif _meets(own["pct"]) and is_payment \
+                    and lab["category"] != "RELATED_PARTY":
                 flags.append({"scenario": sid, "type": "kyc_rule_enforced",
-                              "detail": f"{txn}: {own['name']} {own['pct']}% >= "
+                              "detail": f"{txn}: {own['name']} {own['pct']}% meets "
                                         f"{threshold}% -> RELATED_PARTY"})
                 cats[txn] = "RELATED_PARTY"
-            elif own["pct"] < threshold and lab["category"] == "RELATED_PARTY":
+            elif not _meets(own["pct"]) and lab["category"] == "RELATED_PARTY":
                 flags.append({"scenario": sid, "type": "kyc_rule_enforced",
-                              "detail": f"{txn}: {own['name']} {own['pct']}% < "
-                                        f"{threshold}% -> not related (CONSULTING)"})
-                cats[txn] = "CONSULTING"
+                              "detail": f"{txn}: {own['name']} {own['pct']}% below "
+                                        f"{threshold}% -> not related; keeping the "
+                                        "categorizer's pre-KYC economic label"})
+                cats[txn] = lab.get("base_category") or "CONSULTING"
         if cats[txn] == "RELATED_PARTY":
             if own is None:
                 flags.append({"scenario": sid, "type": "related_party_unverified",
@@ -217,6 +232,7 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
                 {"id": o["description"], "category": o["category"],
                  "amount": abs(o["amount_usd"])})
         for fx in a.get("fx_disclosures", []):
+            fx["currency"] = (fx.get("currency") or "").upper()
             if fx.get("foreign_amount"):
                 merged["fx_rates"][fx["currency"]] = fx["usd_amount"] / fx["foreign_amount"]
         merged["ebitda_addbacks"] += [
@@ -241,6 +257,96 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
     return merged
 
 
+_ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def build_covenant(sid, clause_spec, period, composition, ledger, flags):
+    """Turn one raw clause spec into an engine-ready covenant, applying EVERY
+    deterministic backstop. Shared by run_all.main and judge._recompute_scenario
+    so a judge recompute can never bypass these (the P8 double-count leaked
+    exactly because the judge rebuilt covenants without them)."""
+    clause = clause_spec["clause"]
+    comp_defs = {c["name"]: dict(c["definition"])
+                 for c in clause_spec["components"]}
+
+    for name, d in comp_defs.items():
+        if "NOISE" in (d.get("categories") or []):
+            d["categories"] = [x for x in d["categories"] if x != "NOISE"]
+            flags.append({"scenario": sid, "type": "noise_component_stripped",
+                          "detail": f"{clause}/{name}"})
+
+    # deterministic dedup: two summands with the SAME categories AND the SAME
+    # effective period sum the exact same ledger rows twice - always a
+    # double-count (P8: payroll + severance, both [PAYROLL] -> 8.44M vs 4.22M).
+    scen_period = ((period.get("start"), period.get("end"))
+                   if period.get("start") and period.get("end") else ())
+    cat_sets = {}
+    for name, d in comp_defs.items():
+        cats = d.get("categories") or []
+        if d.get("txn_ids") is not None:
+            continue  # explicit-membership components are not category sums
+        eff_period = tuple(d.get("period")) if d.get("period") else scen_period
+        key = (tuple(sorted(cats)), eff_period)
+        if cats and key in cat_sets:
+            d["txn_ids"] = []       # contributes 0, formula reference preserved
+            d["categories"] = []
+            flags.append({"scenario": sid, "type": "duplicate_component_zeroed",
+                          "detail": f"{clause}: {name} == {cat_sets[key]} "
+                                    "(identical categories+period) -> zeroed to "
+                                    "avoid double-count"})
+        cat_sets.setdefault(key, name)
+
+    # auditor-specific composition map: explicit membership overrides the
+    # category-based definition, but only when the auditor's own stated figure
+    # confirms it to the cent (adoption gate); else divergence flag.
+    cmap = composition.get(sid, {}).get(clause, {})
+    for name, m in cmap.items():
+        if name not in comp_defs or not m.get("confident", True):
+            continue
+        if m.get("stated_confirmed"):
+            valid = {r["txn_id"] for r in ledger[sid]}
+            ids = [t for t in m["txn_ids"] if t in valid]
+            if len(ids) < len(m["txn_ids"]):
+                flags.append({"scenario": sid, "type": "composition_bad_txn",
+                              "detail": f"{clause}/{name}: {set(m['txn_ids']) - valid}"})
+            comp_defs[name]["txn_ids"] = ids
+            comp_defs[name]["off_ledger_ids"] = m.get("off_ledger_ids", [])
+        else:
+            flags.append({"scenario": sid, "type": "composition_divergence",
+                          "detail": f"{clause}/{name}: composed "
+                                    f"{m.get('composed_sum')} unconfirmed "
+                                    "(category-based value kept)"})
+
+    # share-of-total ratio X / TOTAL where X is subsidiary transfers: the
+    # denominator "total capex" must contain the numerator's rows (P9 archetype)
+    m_ratio = re.fullmatch(r"\s*(\w+)\s*/\s*(\w+)\s*", clause_spec["formula"])
+    if m_ratio:
+        num, den = comp_defs.get(m_ratio.group(1)), comp_defs.get(m_ratio.group(2))
+        if (num is not None and den is not None
+                and "SUBSIDIARY_TRANSFER" in (num.get("categories") or [])
+                and "CAPEX" in (den.get("categories") or [])
+                and "SUBSIDIARY_TRANSFER" not in (den.get("categories") or [])
+                and not den.get("include_subsidiary_transfers")):
+            den["include_subsidiary_transfers"] = True
+            flags.append({"scenario": sid, "type": "transfer_ratio_rule",
+                          "detail": f"{clause}: denominator {m_ratio.group(2)} "
+                                    "widened to include subsidiary transfers"})
+
+    covenant = {"components": comp_defs, "formula": clause_spec["formula"],
+                "threshold": clause_spec["threshold"]}
+    if period.get("start") and period.get("end"):
+        covenant["period"] = [period["start"], period["end"]]
+    cp = clause_spec.get("period")
+    if cp and len(cp) == 2 and all(_ISO.match(str(x) or "") for x in cp):
+        covenant["period"] = list(cp)
+    elif cp:
+        flags.append({"scenario": sid, "type": "period_invalid",
+                      "detail": f"{clause}: clause period {cp} not ISO - ignored"})
+    if clause_spec.get("condition"):
+        covenant["condition"] = clause_spec["condition"]
+    return covenant
+
+
 def main() -> None:
     ledger = json.loads((ART / "ledger_real.json").read_text())
     facts = json.loads((ART / "facts.json").read_text())
@@ -261,45 +367,31 @@ def main() -> None:
             flags.append({"scenario": sid, "type": "covenants_missing", "detail": ""})
             continue
         period = (meta.get(sid, {}).get("covenant_period") or {})
+        if period and not (_ISO.match(period.get("start") or "")
+                           and _ISO.match(period.get("end") or "")):
+            flags.append({"scenario": sid, "type": "period_invalid",
+                          "detail": f"covenant_period {period} not ISO - ignored"})
+            period = {}
         answers[sid], trails[sid] = {}, {"facts": sf, "cells": {}}
         for clause_spec in cov["clauses"]:
             clause = clause_spec["clause"]
-            comp_defs = {c["name"]: dict(c["definition"])
-                         for c in clause_spec["components"]}
-            # auditor-specific composition map: explicit membership overrides
-            # the category-based definition (only confident entries)
-            cmap = composition.get(sid, {}).get(clause, {})
-            for name, m in cmap.items():
-                if name not in comp_defs or not m.get("confident", True):
-                    continue
-                # ADOPTION GATE: an explicit membership list is just another
-                # opinion unless the auditor's own stated figure confirms it
-                # to the cent. Unconfirmed divergence goes to the judge.
-                if m.get("stated_confirmed"):
-                    valid = {r["txn_id"] for r in ledger[sid]}
-                    ids = [t for t in m["txn_ids"] if t in valid]
-                    if len(ids) < len(m["txn_ids"]):
-                        flags.append({"scenario": sid, "type": "composition_bad_txn",
-                                      "detail": f"{clause}/{name}: "
-                                                f"{set(m['txn_ids']) - valid}"})
-                    comp_defs[name]["txn_ids"] = ids
-                    comp_defs[name]["off_ledger_ids"] = m.get("off_ledger_ids", [])
-                else:
-                    flags.append({"scenario": sid, "type": "composition_divergence",
-                                  "detail": f"{clause}/{name}: composed "
-                                            f"{m.get('composed_sum')} unconfirmed "
-                                            "(category-based value kept)"})
-            covenant = {
-                "components": comp_defs,
-                "formula": clause_spec["formula"],
-                "threshold": clause_spec["threshold"],
-            }
-            if period.get("start") and period.get("end"):
-                covenant["period"] = [period["start"], period["end"]]
-            if clause_spec.get("condition"):
-                covenant["condition"] = clause_spec["condition"]
+            covenant = build_covenant(sid, clause_spec, period, composition,
+                                      ledger, flags)
             try:
                 r = compute_cell(covenant, ledger[sid], sf)
+            except compute.NegativeDenominator as e:
+                flags.append({"scenario": sid, "type": "negative_denominator",
+                              "detail": f"{clause}: {e} - spec is broken, a "
+                                        "signed compare would silently pass"})
+                continue  # cell left absent -> judge/fallback must produce it
+            except compute.EmptyComponent as e:
+                flags.append({"scenario": sid, "type": "empty_component",
+                              "detail": f"{clause}: {e}"})
+                continue
+            except ZeroDivisionError:
+                flags.append({"scenario": sid, "type": "division_by_zero",
+                              "detail": f"{clause}: component sums to exactly 0"})
+                continue
             except Exception as e:  # noqa: BLE001
                 flags.append({"scenario": sid, "type": "engine_error",
                               "detail": f"{clause}: {e}"})
@@ -308,6 +400,14 @@ def main() -> None:
                 r["computation"]["unmodeled_condition"] = clause_spec["unmodeled_condition"]
                 flags.append({"scenario": sid, "type": "unmodeled_condition",
                               "detail": f"{clause}: {clause_spec['unmodeled_condition'][:150]}"})
+            # evidence policy: on BREACH a wrong txn id scores the same as null
+            # but a right one earns 0.2 - always submit the best candidate even
+            # when no single txn flips the verdict (weakly dominant strategy)
+            if r["status"] == "BREACH" and r["evidence_txn_id"] is None:
+                cands = r["computation"].get("evidence_candidates") or []
+                if cands:
+                    r["evidence_txn_id"] = cands[0]
+                    r["computation"]["evidence_fallback"] = True
             answers[sid][clause] = {k: r[k] for k in ("status", "actual", "evidence_txn_id")}
             trails[sid]["cells"][clause] = {**r["computation"],
                                             "quote": clause_spec.get("quote", "")}

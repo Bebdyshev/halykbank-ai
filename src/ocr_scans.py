@@ -60,7 +60,15 @@ def main() -> None:
         chunks = []
         for page in pages:
             png = render_page(doc, page)
-            text = generate(PROMPT, model=STRONG, images=[str(png)])
+            try:
+                text = generate(PROMPT, model=STRONG, images=[str(png)])
+            except Exception as e:  # noqa: BLE001
+                print(f"  !! vision failed for {doc} p{page} ({str(e)[:80]}) "
+                      "-> tesseract fallback")
+                r = subprocess.run(
+                    ["tesseract", str(png), "-", "-l", "rus+kaz+eng"],
+                    capture_output=True, text=True)
+                text = f"[tesseract fallback]\n{r.stdout}"
             (OUT / f"{doc}-p{page}.md").write_text(text)
             chunks.append((page, text))
             n_pages += 1

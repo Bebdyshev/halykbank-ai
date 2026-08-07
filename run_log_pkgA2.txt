@@ -1,0 +1,160 @@
+== wiping derived artifacts (keeping llm_cache + parsed_docs/ocr) ==
+== S0 ledger ==
+total 1473 rows: 673 real / 800 decoy
+accounts: {'P1': 'ACC-7801', 'P4': 'ACC-7804', 'P6': 'ACC-7806', 'P8': 'ACC-7808', 'B1': 'ACC-7201', 'P7': 'ACC-7807', 'B4': 'ACC-7204', 'P10': 'ACC-7810', 'P2': 'ACC-7802', 'P3': 'ACC-7803', 'P5': 'ACC-7805', 'P9': 'ACC-7809'}
+EMPTY-AMOUNT rows (values live in PDFs): [('P7', 'TXN-P7-0033'), ('P8', 'TXN-P8-0031')]
+non-USD rows: 15: [('P1', 'TXN-P1-0049'), ('P1', 'TXN-P1-0005'), ('P1', 'TXN-P1-0018'), ('B4', 'TXN-B4-0049'), ('P7', 'TXN-P7-0051'), ('P5', 'TXN-P5-0047'), ('P9', 'TXN-P9-0038'), ('B1', 'TXN-B1-0038'), ('B1', 'TXN-B1-0050'), ('P8', 'TXN-P8-0041'), ('P8', 'TXN-P8-0025'), ('P10', 'TXN-P10-0057'), ('P2', 'TXN-P2-0008'), ('P3', 'TXN-P3-0024'), ('P6', 'TXN-P6-0042')]
+== S1 ingest ==
+ingested 200 PDFs -> /Users/bebdyshev/Documents/Github/halykbank-ai/artifacts/parsed_docs
+docs with OCR-needed pages: 4
+== S1b ocr ==
+f3fa6d20c8a1 p3: 1155 chars
+OCR done: 6 pages across 4 docs spliced into parsed_docs/
+== S2 classify ==
+doc types: {('other', 'n_a'): 102, ('other', 'draft'): 33, ('audit_report', 'final'): 13, ('loan_agreement', 'active'): 12, ('loan_agreement', 'superseded'): 12, ('other', 'active'): 8, ('kyc_dossier', 'final'): 6, ('kyc_dossier', 'n_a'): 6, ('audit_report', 'draft'): 6, ('treasury_memo', 'n_a'): 1, ('group_financials', 'final'): 1}
+loan_agreement/active (12): {'1d262694c308': 'P5', '3a4aa2dbd6c4': 'P4', '61dfc54675dc': 'P8', '6acb5bbc3e70': 'P7', '85afaaca89ad': 'P3', '8d878af064f2': 'P1', 'b2519c8e3ea4': 'P2', 'b38facf69a94': 'B1', 'ba475cfc33a4': 'P10', 'bc5451f75caf': 'B4', 'be7c1bba8940': 'P6', 'c2c9382c9168': 'P9'}
+loan_agreement/superseded (12): {'3c7841365bf3': 'P6', '5f1aff0e8590': 'P2', '6dd84ab9ef0e': 'P1', '832e580c962f': 'P9', 'a2ca5ce24acb': 'P10', 'aaff7bd53ea8': 'P4', 'ad991140ab81': 'P7', 'b084add0e80a': 'B1', 'c10ebf055fa5': 'P5', 'e16b5e6532b5': 'B4', 'edfab0e95f79': 'P8', 'ffb3a98e3733': 'P3'}
+kyc_dossier/* (12): {'07e1a2a0275d': 'P10', '22c1707dad45': 'P8', '2bdb134db53c': 'P7', '2dd8671ac405': 'P1', '63e162bd710b': 'P2', '89af6ae7964f': 'P5', '9f1a89a5ed42': 'P4', 'a144690a213c': 'B4', 'aaf665cbc612': 'P9', 'c66b5b638410': 'B1', 'ee32532e1126': 'P3', 'f3fa6d20c8a1': 'P6'}
+audit_report/final (13): {'2ed0b2ee4b57': 'P4', '3963dfb04b2a': 'P6', '3fd0d34546b5': 'P2', '448b59e12768': 'B1', '4db1d630055f': 'P10', '596a5d8b04f5': 'P7', '6f1c06f8479a': 'P3', '7903e7d18e94': 'P9', '896b7933db48': 'P1', 'a16d7a619f87': 'B1', 'bf9b7bffc514': 'P8', 'e334c4d4d3ea': 'B4', 'ea8d8bac3e62': 'P5'}
+audit_report/draft (6): {'265c91f8f86c': 'P9', '2762d1c605e6': 'B1', '4a08260debe0': '?', '6387d5cd9c00': 'P8', 'a81217cea0a1': 'P3', 'b5ccff3af55d': 'P6'}
+treasury_memo/* (1): {'26acfab1e58b': 'P7'}
+group_financials/* (1): {'a5cc1400b640': '?'}
+== S2b scenario meta ==
+P10 -> Karaganda Logistics Terminal JSC
+P9 -> Zhezkazgan Mining Services JSC
+P6 -> Taraz Cement Works JSC
+== S3 extract ==
+  covenant passes disagree for P3 -> arbiter
+kyc: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+audit: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+covenants: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+group: ['P5']
+== S4 categorize ==
+B1: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+B4: 57 rows, 3 category / 3 decoy disagreements -> 1 batched tie-break call
+P5: 54 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P10: 59 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P6: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P8: 55 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P4: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P1: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P2: 56 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P3: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P9: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P7: 56 rows, 6 category / 6 decoy disagreements -> 1 batched tie-break call
+== S4b composition ==
+Traceback (most recent call last):
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/composition.py", line 268, in <module>
+    main()
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/composition.py", line 258, in main
+    for sid, comp_map, flags in pmap(_one, sorted(ledger)):
+                                ^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 152, in pmap
+    return list(ex.map(fn, items))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 619, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 317, in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/composition.py", line 250, in _one
+    comp_map, flags = build_for_scenario(sid, facts, categories, ledger, sf)
+                      ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/composition.py", line 190, in build_for_scenario
+    result = generate(base, model=STRONG, schema=SCHEMA, reasoning_effort="high")
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 297, in generate
+    result, served_by = _call_gemini(prompt, images, schema)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 247, in _call_gemini
+    raise RuntimeError(f"gemini pool failed: {last}")
+RuntimeError: gemini pool failed: [Errno 8] nodename nor servname provided, or not known
+P1: composition for 3 clauses / 5 components
+P5: composition for 3 clauses / 5 components
+P6: composition for 3 clauses / 6 components
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+== S5 compute ==
+computed 36 cells for 12 scenarios; 10 flags
+  FLAG [P1] unmodeled_condition: 6.1: Суммы, переклассифицированные аудиторами Заёмщика, учитываются по переклассифицированной статье
+  FLAG [P10] unmodeled_condition: 6.1: Учитываются реклассификации, принятые аудиторами Заёмщика; реклассификации, рассмотренные и отк
+  FLAG [P3] unmodeled_condition: 6.1: EBITDA calculation requires financial statement data including non-cash items (depreciation, am
+  FLAG [P3] unmodeled_condition: 6.2: Amounts reclassified by the borrower's independent auditor as financial or other non-operating 
+  FLAG [P7] unmodeled_condition: 6.1: Точный расчёт EBITDA требует прибавления амортизации, не выделяемой в доступных категориях; фор
+  FLAG [P7] unmodeled_condition: 6.3: За исключением случаев, прямо согласованных Кредитором в письменной форме
+  FLAG [P9] kyc_rule_enforced: TXN-P9-0017: Zhezkazgan Conveyor Assets LLP pledged 87.6% -> restricted, transfer excluded (CAPEX)
+  FLAG [P9] transfer_ratio_rule: 6.1: denominator total_capex widened to include subsidiary transfers (share-of-total)
+  FLAG [P9] unmodeled_condition: 6.1: Numerator includes only transfers to Unrestricted Subsidiaries as per KYC dossier; transfers to
+  FLAG [P9] unmodeled_condition: 6.3: The term 'Ограниченные платежи' (Restricted Payments) is not defined in the agreement. This int
+== S6 judge ==
+Traceback (most recent call last):
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/judge.py", line 563, in <module>
+    main()
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/judge.py", line 465, in main
+    verdicts = dict(zip(todo, pmap(
+                              ^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 152, in pmap
+    return list(ex.map(fn, items))
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 619, in result_iterator
+    yield _result_or_cancel(fs.pop())
+          ^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 317, in _result_or_cancel
+    return fut.result(timeout)
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 456, in result
+    return self.__get_result()
+           ^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/_base.py", line 401, in __get_result
+    raise self._exception
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/concurrent/futures/thread.py", line 59, in run
+    result = self.fn(*self.args, **self.kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/judge.py", line 466, in <lambda>
+    lambda s: generate(_scenario_context(s, trails, facts, ledger, answers),
+              ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 297, in generate
+    result, served_by = _call_gemini(prompt, images, schema)
+                        ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/llm.py", line 247, in _call_gemini
+    raise RuntimeError(f"gemini pool failed: {last}")
+RuntimeError: gemini pool failed: [Errno 8] nodename nor servname provided, or not known
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+  [llm] openai deepseek-v4-pro failed (Connection error.); trying gemini
+== S7 assemble ==
+Traceback (most recent call last):
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/assemble.py", line 106, in <module>
+    sys.exit(main())
+             ^^^^^^
+  File "/Users/bebdyshev/Documents/Github/halykbank-ai/src/assemble.py", line 68, in main
+    answers = json.loads(Path(answers_path).read_text())
+                         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py", line 1027, in read_text
+    with self.open(mode='r', encoding=encoding, errors=errors) as f:
+         ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/bebdyshev/.local/share/uv/python/cpython-3.12.13-macos-aarch64-none/lib/python3.12/pathlib.py", line 1013, in open
+    return io.open(self, mode, buffering, encoding, errors, newline)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+FileNotFoundError: [Errno 2] No such file or directory: 'artifacts/answers_judged.json'

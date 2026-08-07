@@ -11,6 +11,7 @@ Clause keys come from submission_template.json - nothing about "6.1..6.3" is
 assumed. Category taxonomy is FIXED and shared with the categorization stage.
 """
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -56,6 +57,11 @@ KYC_SCHEMA = {
             },
         },
         "related_party_threshold_pct": {"type": ["number", "null"]},
+        "threshold_inclusive": {
+            "type": "boolean",
+            "description": ("true when ownership EQUAL to the threshold already counts "
+                            "as related («40% и более», «не менее»); false for strictly "
+                            "above («более 40%», «свыше»)")},
         "threshold_quote": {"type": "string"},
         "subsidiaries": {
             "type": "array",
@@ -77,8 +83,8 @@ KYC_SCHEMA = {
             "required": ["cut_pct", "above_or_equal_treatment", "below_treatment", "quote"],
         },
     },
-    "required": ["ownership", "related_party_threshold_pct", "threshold_quote",
-                 "subsidiaries", "perimeter_rule"],
+    "required": ["ownership", "related_party_threshold_pct", "threshold_inclusive",
+                 "threshold_quote", "subsidiaries", "perimeter_rule"],
 }
 
 
@@ -87,7 +93,9 @@ def extract_kyc(doc_hash: str) -> dict:
         "Extract related-party facts from this KYC dossier. Report:\n"
         "1) the ownership table - every counterparty with its voting-rights %;\n"
         "2) the dossier's own numeric threshold for what counts as a related party "
-        "(null if the dossier states no such rule);\n"
+        "(null if the dossier states no such rule), and whether EQUALITY at the "
+        "threshold counts («и более»/«не менее» -> inclusive; «более»/«свыше» -> "
+        "strictly above, exclusive) - quote the exact wording;\n"
         "3) the subsidiary collateral table (name + pledged %) if present;\n"
         "4) the dossier's own rule that splits subsidiaries into restricted vs "
         "unrestricted (perimeter rule): the numeric cut, which side of the cut is "
@@ -320,6 +328,13 @@ COVENANT_SCHEMA = {
                         "description": ("true when the clause's metric is defined to include "
                                         "auditor-approved one-off add-backs to EBITDA/operating result"),
                     },
+                    "period": {
+                        "type": ["array", "null"],
+                        "items": {"type": "string"},
+                        "description": ("[start, end] ISO dates when THIS clause tests a "
+                                        "window different from the agreement's covenant "
+                                        "period (e.g. only H1); null otherwise"),
+                    },
                     "unmodeled_condition": {
                         "type": ["string", "null"],
                         "description": "carve-out/rule this DSL cannot express; null if fully modeled",
@@ -327,7 +342,8 @@ COVENANT_SCHEMA = {
                     "quote": {"type": "string"},
                 },
                 "required": ["clause", "title", "components", "formula", "threshold",
-                             "condition", "uses_ebitda_addbacks", "unmodeled_condition", "quote"],
+                             "condition", "uses_ebitda_addbacks", "period",
+                             "unmodeled_condition", "quote"],
             },
         },
     },
@@ -351,16 +367,23 @@ For each clause produce:
   expenditures (from group financial statements rather than the borrower's ledger).
   Set include_subsidiary_transfers=true when the component measures total spending that by
   the clause's logic includes asset transfers to subsidiaries. Set "period" only when the
-  clause tests a sub-period.
+  clause tests a sub-period. NOISE is NEVER a valid component category (decoy rows are
+  excluded by construction). Two components of one clause must never carry identical
+  category sets - that double-counts the same rows; model same-source items as ONE
+  component.
 - formula: arithmetic over component names; max()/min() allowed; ratios as plain division.
 - threshold: "<=" for caps, ">=" for floors; value as plain number ($3,000,000.00 ->
   3000000.00; 1.20x -> 1.20); strict=true when being exactly AT the limit still complies.
 - condition: ONLY for springing covenants; null otherwise.
+- period: [start, end] ISO dates ONLY when the clause itself tests a window narrower
+  than the agreement's covenant period (e.g. «за первое полугодие»); null otherwise.
 - uses_ebitda_addbacks: true when the metric's definition incorporates auditor-approved
   one-off add-backs. In that case reference the built-in variable `ebitda_addbacks`
   (the sum of qualifying add-back amounts, supplied by the engine) at the right place
   in the formula, e.g. "(revenue - opex + ebitda_addbacks) / revenue".
 - unmodeled_condition: any rule you could NOT express in this DSL - never silently drop rules.
+  Even then, every component MUST still name at least one category (your closest
+  approximation) - a component with an empty category list is uncomputable and invalid.
 - quote: the verbatim clause text.
 
 The engine automatically applies auditor reclassifications, cutoff exclusions,
@@ -386,7 +409,12 @@ Example of ONE valid clause object (formula syntax: only component names, number
   "unmodeled_condition": null, "quote": "Пункт 6.1 ..."}}
 
 AGREEMENT TEXT (full, including definitions):
-{text}"""
+{text}
+
+If AMENDMENT sections follow the agreement, they are EXECUTED amendments
+(«дополнительное соглашение») that OVERRIDE the base agreement wherever they
+conflict - extract the amended thresholds/formulas/definitions, not the original
+ones, and quote the amendment text for the changed parts."""
 
 
 def clause_keys_for(scenario_id: str) -> list:
@@ -404,6 +432,7 @@ def _spec_signature(spec: dict) -> str:
             "threshold": cl["threshold"],
             "condition": cl.get("condition"),
             "uses_ebitda_addbacks": cl.get("uses_ebitda_addbacks"),
+            "period": cl.get("period"),
             "components": sorted(
                 (c["name"], tuple(sorted(c["definition"]["categories"])),
                  c["definition"].get("include_subsidiary_transfers"),
@@ -430,23 +459,120 @@ VERBATIM CLAUSE TEXTS (from candidate quotes):
 Category vocabulary: {taxonomy}"""
 
 
-def extract_covenants(doc_hash: str, scenario_id: str) -> dict:
+def _empty_components(spec):
+    bad = []
+    for cl in spec.get("clauses", []):
+        seen = {}
+        for c in cl.get("components", []):
+            d = c.get("definition") or {}
+            cats = d.get("categories") or []
+            name = f"{cl.get('clause')}/{c.get('name')}"
+            if not cats and d.get("txn_ids") is None:
+                bad.append(name + " (empty)")
+            if "NOISE" in cats:
+                # NOISE = planted decoys excluded by construction; a component
+                # built on it sums garbage (P3 6.1: EBITDA=164M from decoys)
+                bad.append(name + " (uses NOISE)")
+            key = tuple(sorted(cats))
+            if cats and key in seen:
+                # two summands with identical categories double-count every row
+                bad.append(f"{name} duplicates {seen[key]} (identical categories)")
+            seen.setdefault(key, name)
+    return bad
+
+
+_RATIO_HINTS = ("отношение", "коэффициент", "ratio", "leverage", "coverage",
+                "cover", "покрыти", "к ebitda", "/ ebitda", "к выручке")
+
+
+def _broken_ratios(spec):
+    """A clause the text frames as a RATIO must divide by a REAL component.
+    Measured failure mode (resample variance on EBITDA-ratio clauses): the
+    denominator gets dropped (P3: formula='financing_inflow') or faked with a
+    degenerate constant (P7: '.../ max(ebitda_addbacks+1,1)'). Both are
+    detectable structurally without ground truth."""
+    bad = []
+    for cl in spec.get("clauses", []):
+        q = (cl.get("quote") or "").lower()
+        formula = cl.get("formula", "") or ""
+        looks_ratio = (any(h in q for h in _RATIO_HINTS)
+                       or bool(re.search(r"\d[.,]\d+\s*[x×]", q)))
+        if not looks_ratio:
+            continue
+        comp_names = {c["name"] for c in cl.get("components", [])}
+        if "/" not in formula:
+            bad.append(f"{cl['clause']} (ratio clause but formula has NO "
+                       f"division: '{formula}')")
+            continue
+        denom = formula.split("/", 1)[1]
+        real = [n for n in comp_names if n != "ebitda_addbacks" and n in denom]
+        if not real:
+            bad.append(f"{cl['clause']} (ratio denominator references no real "
+                       f"component, only constants/addbacks: '{formula}')")
+    return bad
+
+
+_RETRY_RULES = (
+    "Re-produce the full spec. Rules: every component needs at least one "
+    "category (closest approximation; inexpressible remainder goes to "
+    "unmodeled_condition); NOISE is never a valid component category (decoys "
+    "are excluded by construction); two components of one clause must not carry "
+    "identical category sets (that double-counts rows - model same-source items "
+    "as ONE component); a clause the text frames as a RATIO ('отношение ... к "
+    "EBITDA', 'x' multiple, coverage/leverage) MUST be 'numerator / denominator' "
+    "where the denominator is a REAL component sum (e.g. EBITDA = revenue - opex "
+    "via categories) - never drop the denominator, never fake it with a constant "
+    "or with ebitda_addbacks alone.")
+
+
+def _spec_defects(spec):
+    return _empty_components(spec) + _broken_ratios(spec)
+
+
+def _guard_spec(base, spec, suffix=""):
+    """Structural repair for ANY final covenant spec (a pass OR the arbiter):
+    empty/NOISE/duplicate components and broken ratios trigger one targeted
+    live retry; keep whichever version has fewer defects."""
+    bad = _spec_defects(spec)
+    if not bad:
+        return spec
+    print(f"  covenant defects {bad} -> targeted retry")
+    retry = generate(
+        base + suffix + "\n\nDEFECTS IN A PREVIOUS ATTEMPT: "
+        f"{bad}.\n" + _RETRY_RULES,
+        model=STRONG, schema=COVENANT_SCHEMA, reasoning_effort="high")
+    return retry if len(_spec_defects(retry)) < len(bad) else spec
+
+
+def _covenant_pass(base, suffix=""):
+    spec = generate(base + suffix, model=STRONG, schema=COVENANT_SCHEMA,
+                    reasoning_effort="high")
+    return _guard_spec(base, spec, suffix)
+
+
+def extract_covenants(doc_hash: str, scenario_id: str,
+                      amendment_docs=()) -> dict:
     keys = clause_keys_for(scenario_id)
     text = _doc_text(doc_hash)
+    for ad in amendment_docs:
+        text += ("\n\n===== AMENDMENT (executed, overrides the agreement "
+                 f"above where they conflict) [{ad}] =====\n" + _doc_text(ad))
     base = COVENANT_PROMPT.format(
         clause_keys=keys, taxonomy=json.dumps(TAXONOMY), text=text)
-    p1 = generate(base, model=STRONG, schema=COVENANT_SCHEMA, reasoning_effort="high")
-    p2 = generate(base + "\n\n(Independent verification pass - read carefully.)",
-                  model=STRONG, schema=COVENANT_SCHEMA, reasoning_effort="high")
+    p1 = _covenant_pass(base)
+    p2 = _covenant_pass(base, "\n\n(Independent verification pass - read carefully.)")
     if _spec_signature(p1) == _spec_signature(p2):
-        return p1
+        return _guard_spec(base, p1)
     quotes = "\n---\n".join(c["quote"] for c in p1["clauses"])
     print(f"  covenant passes disagree for {scenario_id} -> arbiter")
     arbiter = ARBITER_PROMPT.format(
         clause_keys=keys, a=json.dumps(p1, ensure_ascii=False),
         b=json.dumps(p2, ensure_ascii=False), quotes=quotes,
         taxonomy=json.dumps(TAXONOMY))
-    return generate(arbiter, model=STRONG, schema=COVENANT_SCHEMA, reasoning_effort="high")
+    arb = generate(arbiter, model=STRONG, schema=COVENANT_SCHEMA,
+                   reasoning_effort="high")
+    # the arbiter bypasses _covenant_pass; guard its output too (P3/P8 leaked here)
+    return _guard_spec(base, arb)
 
 
 # ---------------------------------------------------------------- GROUP REPORTS
@@ -518,6 +644,14 @@ def main() -> None:
     scenario_meta = json.loads((REPO / "artifacts" / "scenario_meta.json").read_text())
     out = {"kyc": {}, "audit": {}, "covenants": {}, "group": {}}
 
+    amendments = {}
+    for doc, meta in sorted(index.items()):
+        if (meta["doc_type"] == "loan_amendment"
+                and meta["authority"] != "superseded" and meta["scenario_id"]):
+            amendments.setdefault(meta["scenario_id"], []).append(doc)
+    if amendments:
+        print(f"AMENDMENTS detected: { {k: len(v) for k, v in amendments.items()} }")
+
     def _one(item):
         doc, meta = item
         sid, dt, auth = meta["scenario_id"], meta["doc_type"], meta["authority"]
@@ -529,7 +663,9 @@ def main() -> None:
             return ("audit", sid, {"doc": doc, **extract_audit(doc)})
         if dt == "loan_agreement" and auth == "active" and sid:
             print(f"COVENANTS {sid} <- {doc}")
-            return ("covenants", sid, {"doc": doc, **extract_covenants(doc, sid)})
+            return ("covenants", sid,
+                    {"doc": doc, **extract_covenants(doc, sid,
+                                                     amendments.get(sid, []))})
         if dt == "group_financials":
             g, link = extract_group(doc, scenario_meta)
             print(f"GROUP {doc} -> {link['consolidates_borrower']}")
@@ -544,6 +680,11 @@ def main() -> None:
         if kind == "audit":
             out["audit"].setdefault(sid, []).append(payload)
         else:
+            if sid in out[kind]:
+                print(f"!! DUPLICATE {kind} facts for {sid}: keeping "
+                      f"{out[kind][sid].get('doc')}, IGNORING {payload.get('doc')} "
+                      "- inspect doc_index before trusting this scenario")
+                continue
             out[kind][sid] = payload
 
     (REPO / "artifacts" / "facts.json").write_text(

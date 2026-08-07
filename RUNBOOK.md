@@ -10,9 +10,13 @@ cd ~/Documents/Github/halykbank-ai
 git status                 # чистое дерево, ветка main
 cat .env                   # DEEPSEEK_API_KEY и GEMINI_API_KEY живы, LLM_PROVIDER=deepseek
 .venv/bin/python -c "import sys; sys.path.insert(0,'src'); import llm; print(llm.STRONG)"
-.venv/bin/python tests/test_compute.py          # 16/16
+.venv/bin/python tests/test_compute.py          # 19/19
+.venv/bin/python -c "import sys; sys.path.insert(0,'src'); import ledger,ingest,ocr_scans,classify,scenario_meta,extract,categorize,composition,run_all,judge,assemble; print('all stages import OK')"  # ловит NameError, который ast не видит
 # баланс DeepSeek: https://platform.deepseek.com  (нужно >= $5 запаса)
 # квоты Gemini обновляются в полночь по Тихоокеанскому — OCR-фолбэк должен быть жив
+which tesseract            # OCR-фолбэк последней надежды (rus+kaz+eng установлены)
+# ПРЕФЛАЙТ VISION: один пробный vision-вызов (страница любого PDF) — убедиться,
+# что хотя бы один из провайдеров жив ДО старта окна; баланс OpenAI тоже проверить
 ```
 
 ## День Х: порядок действий

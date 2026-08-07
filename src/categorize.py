@@ -40,9 +40,16 @@ ROW_SCHEMA = {
                         "subsidiary_unrestricted", "none"]},
                     "is_decoy": {"type": "boolean"},
                     "decoy_reason": {"type": ["string", "null"]},
+                    "base_category": {
+                        "type": ["string", "null"],
+                        "description": ("for RELATED_PARTY rows only: the economic "
+                                        "category this payment would carry if the "
+                                        "counterparty were unrelated (rent, marketing, "
+                                        "consulting...); null otherwise")},
                 },
                 "required": ["txn_id", "category", "kyc_matched_name",
-                             "match_kind", "is_decoy", "decoy_reason"],
+                             "match_kind", "is_decoy", "decoy_reason",
+                             "base_category"],
             },
         },
     },
@@ -69,6 +76,8 @@ Decision guide:
    Otherwise match_kind=none.
 2. category RELATED_PARTY: ONLY for PAYMENTS (negative amounts) to an affiliate per rule 1.
    Money RECEIVED from an affiliate is whatever it economically is (usually REVENUE).
+   For every RELATED_PARTY row also fill base_category: the economic category the payment
+   would carry were the counterparty unrelated (base_category=null for all other rows).
 3. category SUBSIDIARY_TRANSFER: transfers of assets/equipment to the borrower's own
    subsidiaries (any perimeter status - record the status in match_kind).
 4. is_decoy: this dataset plants fake rows. A real row has a coherent
@@ -155,6 +164,14 @@ def main() -> None:
         for r in rows:
             txn = r["txn_id"]
             a, b = p1.get(txn), p2.get(txn)
+            if a is None and b is None:
+                # both passes dropped the row: flag, default like run_all does
+                labels[txn] = {"txn_id": txn, "category": "OPEX",
+                               "kyc_matched_name": None, "match_kind": "none",
+                               "is_decoy": False, "decoy_reason": None,
+                               "base_category": None,
+                               "agree": False, "double_miss": True}
+                continue
             if a is None or b is None:
                 labels[txn] = {**(a or b), "agree": False}
                 continue

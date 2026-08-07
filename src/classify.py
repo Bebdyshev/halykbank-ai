@@ -37,7 +37,7 @@ SCHEMA = {
     "type": "object",
     "properties": {
         "doc_type": {"type": "string", "enum": [
-            "loan_agreement", "kyc_dossier", "audit_report",
+            "loan_agreement", "loan_amendment", "kyc_dossier", "audit_report",
             "treasury_memo", "group_financials", "other"]},
         "authority": {
             "type": "string",
@@ -65,6 +65,10 @@ Document types:
 - loan_agreement: a bank loan agreement with covenants. authority=active if it is the
   executed, currently-in-force edition; authority=superseded if it is explicitly marked
   as an old/replaced/void edition (banner text saying it no longer applies).
+- loan_amendment: a document AMENDING an existing loan agreement («дополнительное
+  соглашение», amendment agreement) - changes thresholds/definitions of the base
+  agreement without replacing it. authority=active if executed and in force;
+  authority=superseded if itself replaced/void.
 - kyc_dossier: know-your-client / related-party dossier for one borrower.
 - audit_report: auditor's report / notes to financial statements / agreed-upon-procedures
   report for one borrower. authority=final for the auditor's final position;

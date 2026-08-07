@@ -1,0 +1,108 @@
+== wiping derived artifacts (keeping llm_cache + parsed_docs/ocr) ==
+== S0 ledger ==
+total 1473 rows: 673 real / 800 decoy
+accounts: {'P1': 'ACC-7801', 'P4': 'ACC-7804', 'P6': 'ACC-7806', 'P8': 'ACC-7808', 'B1': 'ACC-7201', 'P7': 'ACC-7807', 'B4': 'ACC-7204', 'P10': 'ACC-7810', 'P2': 'ACC-7802', 'P3': 'ACC-7803', 'P5': 'ACC-7805', 'P9': 'ACC-7809'}
+EMPTY-AMOUNT rows (values live in PDFs): [('P7', 'TXN-P7-0033'), ('P8', 'TXN-P8-0031')]
+non-USD rows: 15: [('P2', 'TXN-P2-0008'), ('P6', 'TXN-P6-0042'), ('P10', 'TXN-P10-0057'), ('P5', 'TXN-P5-0047'), ('P1', 'TXN-P1-0049'), ('P1', 'TXN-P1-0005'), ('P1', 'TXN-P1-0018'), ('P7', 'TXN-P7-0051'), ('P3', 'TXN-P3-0024'), ('B1', 'TXN-B1-0038'), ('B1', 'TXN-B1-0050'), ('B4', 'TXN-B4-0049'), ('P8', 'TXN-P8-0041'), ('P8', 'TXN-P8-0025'), ('P9', 'TXN-P9-0038')]
+== S1 ingest ==
+ingested 200 PDFs -> /Users/bebdyshev/Documents/Github/halykbank-ai/artifacts/parsed_docs
+docs with OCR-needed pages: 4
+== S1b ocr ==
+f3fa6d20c8a1 p3: 1155 chars
+OCR done: 6 pages across 4 docs spliced into parsed_docs/
+== S2 classify ==
+doc types: {('other', 'n_a'): 102, ('other', 'draft'): 33, ('audit_report', 'final'): 13, ('loan_agreement', 'active'): 12, ('loan_agreement', 'superseded'): 12, ('other', 'active'): 8, ('kyc_dossier', 'final'): 6, ('kyc_dossier', 'n_a'): 6, ('audit_report', 'draft'): 6, ('treasury_memo', 'n_a'): 1, ('group_financials', 'final'): 1}
+loan_agreement/active (12): {'1d262694c308': 'P5', '3a4aa2dbd6c4': 'P4', '61dfc54675dc': 'P8', '6acb5bbc3e70': 'P7', '85afaaca89ad': 'P3', '8d878af064f2': 'P1', 'b2519c8e3ea4': 'P2', 'b38facf69a94': 'B1', 'ba475cfc33a4': 'P10', 'bc5451f75caf': 'B4', 'be7c1bba8940': 'P6', 'c2c9382c9168': 'P9'}
+loan_agreement/superseded (12): {'3c7841365bf3': 'P6', '5f1aff0e8590': 'P2', '6dd84ab9ef0e': 'P1', '832e580c962f': 'P9', 'a2ca5ce24acb': 'P10', 'aaff7bd53ea8': 'P4', 'ad991140ab81': 'P7', 'b084add0e80a': 'B1', 'c10ebf055fa5': 'P5', 'e16b5e6532b5': 'B4', 'edfab0e95f79': 'P8', 'ffb3a98e3733': 'P3'}
+kyc_dossier/* (12): {'07e1a2a0275d': 'P10', '22c1707dad45': 'P8', '2bdb134db53c': 'P7', '2dd8671ac405': 'P1', '63e162bd710b': 'P2', '89af6ae7964f': 'P5', '9f1a89a5ed42': 'P4', 'a144690a213c': 'B4', 'aaf665cbc612': 'P9', 'c66b5b638410': 'B1', 'ee32532e1126': 'P3', 'f3fa6d20c8a1': 'P6'}
+audit_report/final (13): {'2ed0b2ee4b57': 'P4', '3963dfb04b2a': 'P6', '3fd0d34546b5': 'P2', '448b59e12768': 'B1', '4db1d630055f': 'P10', '596a5d8b04f5': 'P7', '6f1c06f8479a': 'P3', '7903e7d18e94': 'P9', '896b7933db48': 'P1', 'a16d7a619f87': 'B1', 'bf9b7bffc514': 'P8', 'e334c4d4d3ea': 'B4', 'ea8d8bac3e62': 'P5'}
+audit_report/draft (6): {'265c91f8f86c': 'P9', '2762d1c605e6': 'B1', '4a08260debe0': '?', '6387d5cd9c00': 'P8', 'a81217cea0a1': 'P3', 'b5ccff3af55d': 'P6'}
+treasury_memo/* (1): {'26acfab1e58b': 'P7'}
+group_financials/* (1): {'a5cc1400b640': '?'}
+== S2b scenario meta ==
+P6 -> Taraz Cement Works JSC
+P9 -> Zhezkazgan Mining Services JSC
+P10 -> Karaganda Logistics Terminal JSC
+== S3 extract ==
+  covenant passes disagree for P9 -> arbiter
+kyc: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+audit: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+covenants: ['B1', 'B4', 'P1', 'P10', 'P2', 'P3', 'P4', 'P5', 'P6', 'P7', 'P8', 'P9']
+group: ['P5']
+== S4 categorize ==
+P4: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P5: 54 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P2: 56 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P3: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P10: 59 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+B1: 57 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P8: 55 rows, 0 category / 0 decoy disagreements -> 1 batched tie-break call
+P6: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+B4: 57 rows, 3 category / 3 decoy disagreements -> 1 batched tie-break call
+P1: 56 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+P7: 56 rows, 6 category / 6 decoy disagreements -> 1 batched tie-break call
+P9: 55 rows, 1 category / 1 decoy disagreements -> 1 batched tie-break call
+== S4b composition ==
+P1: composition for 3 clauses / 5 components
+P5: composition for 3 clauses / 5 components
+P6: composition for 3 clauses / 6 components
+P10: composition for 3 clauses / 7 components
+B4: composition for 3 clauses / 3 components
+P8: composition for 3 clauses / 5 components
+P3: composition for 3 clauses / 4 components
+B1: composition for 3 clauses / 6 components
+P7: composition for 3 clauses / 6 components
+P4: composition for 3 clauses / 5 components
+P2: composition for 3 clauses / 5 components
+P9: composition for 3 clauses / 4 components
+== S5 compute ==
+  FLAG [P6] composition_divergence: 6.2/revenue: composed 6918204.37 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.2/payroll: composed 1482663.19 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.2/utilities: composed 418204.37 unconfirmed (category-based value kept)
+  FLAG [P6] composition_divergence: 6.3/capex: composed 1482663.28 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/tax: composed 888322.83 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/utilities: composed 91447.35 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/revenue: composed 9146882.53 unconfirmed (category-based value kept)
+  FLAG [P7] composition_divergence: 6.1/opex: composed 153799956.67 unconfirmed (category-based value kept)
+  FLAG [P7] unmodeled_condition: 6.1: Точный расчёт EBITDA требует прибавления амортизации, не выделяемой в доступных категориях; фор
+  FLAG [P7] composition_divergence: 6.2/revenue: composed 9146882.53 unconfirmed (category-based value kept)
+  FLAG [P7] unmodeled_condition: 6.3: За исключением случаев, прямо согласованных Кредитором в письменной форме
+  FLAG [P8] composition_divergence: 6.1/labour_remuneration_expenses: composed 3302867.43 unconfirmed (category-based value kept)
+  FLAG [P8] composition_divergence: 6.1/severance_obligations: composed 918447.52 unconfirmed (category-based value kept)
+  FLAG [P8] composition_divergence: 6.2/capex: composed 1918204.36 unconfirmed (category-based value kept)
+  FLAG [P8] composition_divergence: 6.3/revenue: composed 7884663.19 unconfirmed (category-based value kept)
+  FLAG [P9] kyc_rule_enforced: TXN-P9-0017: Zhezkazgan Conveyor Assets LLP pledged 87.6% -> restricted, transfer excluded (CAPEX)
+  FLAG [P9] transfer_ratio_rule: 6.1: denominator total_capex widened to include subsidiary transfers (share-of-total)
+  FLAG [P9] unmodeled_condition: 6.1: Numerator includes only transfers to Unrestricted Subsidiaries as per KYC dossier; transfers to
+  FLAG [P9] composition_divergence: 6.2/revenue: composed 8442118.53 unconfirmed (category-based value kept)
+  FLAG [P9] unmodeled_condition: 6.3: The term 'Ограниченные платежи' (Restricted Payments) is not defined in the agreement. This int
+== S6 judge ==
+  round2 B1/6.1: disagree - wrong_formula:The engine used opex of 6,166,592.66 (only TXN-B1-0023) instead of the comprehen
+  B1/6.1: re-extracted covenants (The engine used opex of 6,166,592.66 (only TXN-B1-0023) instead of the comprehensive opex value list)
+  round2 B4/6.3: disagree - suspect_category:The component definition uses only RELATEd_PARTY category, but the clause define
+  round2 P1/6.1: disagree - false_decoy:These transactions were excluded as noise but are genuine operating expenses (in
+  round2 P3/6.1: disagree - suspect_category:EBITDA is defined with category 'NOISE', which does not correspond to standard E; missed_adjustment:Multiple rows exc
+  round2 P3/6.3: disagree - suspect_category:The engine identified related party payments solely by ledger category 'RELATED_
+  round2 P4/6.1: disagree - false_decoy:Several large transactions excluded as noise/decoys appear to be genuine operati
+  round2 P4/6.2: disagree - false_decoy:Transaction TXN-P4-0014 was excluded from capex in component values despite bein
+  round2 P5/6.1: uncertain - evidence_invalid:Engine evidence is TXN-P5-0004, but the transaction whose fact-reversal flips th; false_decoy:These excluded rows ha
+  round2 P6/6.1: disagree - suspect_category:Operating expenses (Операционные расходы) under financial accounting standards e; wrong_formula:Based on the componen
+  P6/6.1: re-extraction DENIED - would flip ['6.1'] on a single pass (consensus spec kept; status changes need the voted solver)
+  P6/6.1: relabeled TXN-P6-0004 -> PAYROLL
+  P6/6.1: relabeled TXN-P6-0012 -> INSURANCE
+  P6/6.1: relabeled TXN-P6-0021 -> RENT_LEASE
+  P6/6.1: relabeled TXN-P6-0044 -> UTILITIES
+  round2 P6/6.2: disagree - evidence_invalid:Reversing single revenue transaction TXN-P6-0031 reduces revenue to 0 and drops 
+  round2 P7/6.1: disagree - wrong_formula:The machine spec uses a broken EBITDA formulation referencing a subtraction of m
+  P7/6.1: re-extracted covenants (The machine spec uses a broken EBITDA formulation referencing a subtraction of multiple category lis)
+  round2 P8/6.1: disagree - wrong_formula:The component value for labour_remuneration_expenses was incorrectly computed as
+  P8/6.1: re-extracted covenants (The component value for labour_remuneration_expenses was incorrectly computed as 4221314.95 instead )
+  round2 P8/6.3: disagree - wrong_threshold:The actual ratio of related_party_payments to revenue is 342118.65 / 7884663.19 
+  P8/6.3: re-extracted covenants (The actual ratio of related_party_payments to revenue is 342118.65 / 7884663.19 = 0.04339 (or 4.34%))
+  round2 P9/6.1: disagree - missed_adjustment:The auditor composition includes TXN-P9-0017 as transferred assets, bringing the
+  P9/6.1: re-read audit docs (The auditor composition includes TXN-P9-0017 as transferred assets, bringing the sum to 720,323.01 i)
+  P7/6.1: restored pre-judge answer (judge intervention broke the cell)
+== S7 assemble ==
+WROTE submission.json: all cells valid, keys match template
+LLM spend this project: $24.23
+BLIND RUN COMPLETE -> submission.json (ground truth NOT consulted)
