@@ -141,6 +141,9 @@ def _scenario_context(sid, trails, facts, ledger, answers):
          "off_ledger": a.get("off_ledger"), "addbacks": a.get("ebitda_addbacks")}
         for a in facts["audit"].get(sid, [])]
 
+    comp_path = ART / "composition.json"
+    composition = json.loads(comp_path.read_text()) if comp_path.exists() else {}
+
     cells_fmt = []
     for clause, cell in sorted(trails[sid]["cells"].items()):
         ans = answers[sid].get(clause)
@@ -156,7 +159,10 @@ def _scenario_context(sid, trails, facts, ledger, answers):
             f"COMPONENT VALUES: {json.dumps(cell['components'], ensure_ascii=False)}\n"
             f"ENGINE RESULT: status={ans['status']}, actual={ans['actual']}, "
             f"evidence={ans['evidence_txn_id']}, "
-            f"margin={None if margin is None else round(margin, 2)}%")
+            f"margin={None if margin is None else round(margin, 2)}%"
+            + (f"\nAUDITOR-COMPOSITION (explicit membership used): "
+               f"{json.dumps(composition[sid][clause], ensure_ascii=False)[:2000]}"
+               if composition.get(sid, {}).get(clause) else ""))
 
     return JUDGE_PROMPT.format(
         rows="\n".join(contributors),
@@ -165,6 +171,34 @@ def _scenario_context(sid, trails, facts, ledger, answers):
         noise_rows=noise_fmt,
         cells="\n\n".join(cells_fmt),
     )
+
+
+def _kyc_gate_ok(sid, txn, new_lab, facts, ledger):
+    """A judge relabel into RELATED_PARTY sticks only when the KYC dossier
+    confirms it: counterparty matches an ownership entry at/above the
+    dossier's threshold. Same discipline as H4 in run_all."""
+    if new_lab.get("category") != "RELATED_PARTY":
+        return True
+    kyc = facts["kyc"].get(sid, {})
+    threshold = kyc.get("related_party_threshold_pct")
+    if threshold is None:
+        return False
+    import re as _re
+
+    def norm(s):
+        s = (s or "").lower()
+        s = _re.sub(r"[\u00ab\u00bb\"'().,]", " ", s)
+        s = _re.sub(r"\b(llp|jsc|llc|ltd|inc|\u0442\u043e\u043e|\u0430\u043e)\b", " ", s)
+        return _re.sub(r"\s+", " ", s).strip()
+
+    row = next((r for r in ledger[sid] if r["txn_id"] == txn), None)
+    cp = norm(row["counterparty"]) if row else ""
+    cand = norm(new_lab.get("kyc_matched_name") or "")
+    for o in kyc.get("ownership", []):
+        n = norm(o["name"])
+        if n and (n == cand or n in cp or cp in n) and o["pct"] >= threshold:
+            return True
+    return False
 
 
 def _recompute_scenario(sid, facts, categories, ledger, meta, flags):
@@ -235,6 +269,10 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
                 model=STRONG, schema=categorize.ROW_SCHEMA)
             for lab in relabel["labels"]:
                 if lab["txn_id"] in wanted:
+                    if not _kyc_gate_ok(sid, lab["txn_id"], lab, facts, ledger):
+                        report.append(f"{sid}/{clause}: relabel DENIED by KYC gate "
+                                      f"{lab['txn_id']} -/-> RELATED_PARTY")
+                        continue
                     categories[sid][lab["txn_id"]] = {**lab, "agree": False, "rejudged": True}
                     report.append(f"{sid}/{clause}: relabeled {lab['txn_id']} -> {lab['category']}")
                     changed = True
@@ -263,6 +301,10 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
                 model=STRONG, schema=categorize.ROW_SCHEMA)
             for lab in check["labels"]:
                 if lab["txn_id"] == r["txn_id"] and not lab["is_decoy"]                         and lab["category"] != "NOISE":
+                    if not _kyc_gate_ok(sid, lab["txn_id"], lab, facts, ledger):
+                        report.append(f"{sid}/{clause}: decoy rehab DENIED by KYC gate "
+                                      f"{r['txn_id']}")
+                        continue
                     categories[sid][r["txn_id"]] = {**lab, "agree": False, "rejudged": True}
                     report.append(f"{sid}/{clause}: decoy rehab CONFIRMED {r['txn_id']} -> {lab['category']}")
                     changed = True
@@ -295,6 +337,8 @@ def main() -> None:
     flags = json.loads((ART / "flags.json").read_text())
 
     report = []
+    import copy
+    answers_before = copy.deepcopy(answers)
     template = json.loads(
         (REPO / "case-related-docs" / "submission_template.json").read_text())
 
@@ -368,6 +412,16 @@ def main() -> None:
                 trails[sid] = new_trail
         if n_disagree == 0:
             break
+
+    # ---- never-worse invariant: a cell the judge's interventions broke gets
+    # its pre-judge answer back, not a solver guess
+    for sid, clauses in template["answers"].items():
+        for clause in clauses:
+            if answers.get(sid, {}).get(clause) is None \
+                    and answers_before.get(sid, {}).get(clause) is not None:
+                answers.setdefault(sid, {})[clause] = answers_before[sid][clause]
+                report.append(f"{sid}/{clause}: restored pre-judge answer "
+                              "(judge intervention broke the cell)")
 
     # ---- fill any still-missing cells with the fallback solver (empty = wrong)
     for sid, clauses in template["answers"].items():

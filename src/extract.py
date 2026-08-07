@@ -187,6 +187,22 @@ AUDIT_SCHEMA = {
                 "required": ["currency", "foreign_amount", "usd_amount", "quote"],
             },
         },
+        "stated_figures": {
+            "type": "array",
+            "description": ("aggregate figures the auditor STATES explicitly as totals "
+                            "(revenue for the period, operating expenses, EBITDA, category "
+                            "totals) - exact amounts with quotes; empty if none stated"),
+            "items": {
+                "type": "object",
+                "properties": {
+                    "metric_name": {"type": "string",
+                                    "description": "auditor's own wording, e.g. 'выручка за период'"},
+                    "amount_usd": {"type": "number"},
+                    "quote": {"type": "string"},
+                },
+                "required": ["metric_name", "amount_usd", "quote"],
+            },
+        },
         "ebitda_addbacks": {
             "type": "array",
             "description": ("one-off items the auditor deems addable back to EBITDA, AFTER "
@@ -204,7 +220,8 @@ AUDIT_SCHEMA = {
         },
     },
     "required": ["reclassifications", "rejected_reclassifications", "exclusions",
-                 "amount_fills", "off_ledger", "fx_disclosures", "ebitda_addbacks"],
+                 "amount_fills", "off_ledger", "fx_disclosures", "ebitda_addbacks",
+                 "stated_figures"],
 }
 
 
@@ -218,7 +235,9 @@ def extract_audit(doc_hash: str) -> dict:
         "- obligations that count toward covenants but have no ledger row (off-ledger);\n"
         "- implied FX rates from settlement notes (foreign amount + USD settled);\n"
         "- one-off EBITDA add-back items: if the notes define a materiality floor, apply it "
-        "and list ONLY the qualifying items.\n"
+        "and list ONLY the qualifying items;\n"
+        "- stated aggregate figures: every total the document states explicitly "
+        "(revenue for the period, operating expenses, EBITDA, category totals).\n"
         "Every item needs a verbatim quote. Report ONLY what the document actually states - "
         "empty lists are the correct answer for absent sections.\n\nDOCUMENT TEXT:\n"
         + _doc_text(doc_hash)
@@ -347,6 +366,24 @@ For each clause produce:
 The engine automatically applies auditor reclassifications, cutoff exclusions,
 missing-amount corrections, off-ledger additions and FX conversion - do not encode those
 into the formula.
+
+Example of ONE valid clause object (formula syntax: only component names, numbers,
++ - * / parentheses, max(), min() - no other functions, no comparison operators):
+{{"clause": "6.1", "title": "Interest coverage",
+  "components": [
+    {{"name": "revenue", "definition": {{"categories": ["REVENUE"],
+      "include_subsidiary_transfers": false, "period": null,
+      "definition_quote": "Выручка за период..."}}}},
+    {{"name": "opex", "definition": {{"categories": ["OPEX"],
+      "include_subsidiary_transfers": false, "period": null,
+      "definition_quote": "Операционные расходы..."}}}},
+    {{"name": "interest", "definition": {{"categories": ["INTEREST"],
+      "include_subsidiary_transfers": false, "period": null,
+      "definition_quote": "Процентные расходы..."}}}}],
+  "formula": "(revenue - opex) / interest",
+  "threshold": {{"op": ">=", "value": 2.0, "strict": true}},
+  "condition": null, "uses_ebitda_addbacks": false,
+  "unmodeled_condition": null, "quote": "Пункт 6.1 ..."}}
 
 AGREEMENT TEXT (full, including definitions):
 {text}"""

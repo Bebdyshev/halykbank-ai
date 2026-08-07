@@ -87,10 +87,19 @@ def effective_rows(rows, facts, revert_txn=None):
 
 
 def component_value(eff_rows, spec, off_ledger, covenant_period):
+    start, end = spec.get("period") or covenant_period
+    if spec.get("txn_ids") is not None:
+        # explicit membership (auditor-specific composition map): sum exactly
+        # these rows (post-adjustment) + explicitly named off-ledger items
+        wanted = set(spec["txn_ids"])
+        total = sum(a for (t, d, a, _) in eff_rows
+                    if t in wanted and start <= d <= end)
+        off_wanted = set(spec.get("off_ledger_ids") or [])
+        total += sum(o["amount"] for o in off_ledger if o.get("id") in off_wanted)
+        return total
     cats = set(spec["categories"])
     if spec.get("include_subsidiary_transfers"):
         cats |= {"SUBSIDIARY_TRANSFER"}
-    start, end = spec.get("period") or covenant_period
     total = sum(a for (_, d, a, c) in eff_rows if c in cats and start <= d <= end)
     total += sum(o["amount"] for o in off_ledger if o["category"] in cats)
     return total

@@ -246,8 +246,14 @@ def main() -> None:
     facts = json.loads((ART / "facts.json").read_text())
     categories = json.loads((ART / "categorized_ledger.json").read_text())
     meta = json.loads((ART / "scenario_meta.json").read_text())
+    comp_path = ART / "composition.json"
+    composition = json.loads(comp_path.read_text()) if comp_path.exists() else {}
+    if (ART / "composition_flags.json").exists():
+        comp_flags = json.loads((ART / "composition_flags.json").read_text())
+    else:
+        comp_flags = []
 
-    answers, trails, flags = {}, {}, []
+    answers, trails, flags = {}, {}, list(comp_flags)
     for sid in sorted(ledger):
         sf = build_scenario_facts(sid, ledger[sid], facts, categories, flags)
         cov = facts["covenants"].get(sid)
@@ -258,8 +264,23 @@ def main() -> None:
         answers[sid], trails[sid] = {}, {"facts": sf, "cells": {}}
         for clause_spec in cov["clauses"]:
             clause = clause_spec["clause"]
+            comp_defs = {c["name"]: dict(c["definition"])
+                         for c in clause_spec["components"]}
+            # auditor-specific composition map: explicit membership overrides
+            # the category-based definition (only confident entries)
+            cmap = composition.get(sid, {}).get(clause, {})
+            for name, m in cmap.items():
+                if name in comp_defs and m.get("confident", True):
+                    valid = {r["txn_id"] for r in ledger[sid]}
+                    ids = [t for t in m["txn_ids"] if t in valid]
+                    if len(ids) < len(m["txn_ids"]):
+                        flags.append({"scenario": sid, "type": "composition_bad_txn",
+                                      "detail": f"{clause}/{name}: "
+                                                f"{set(m['txn_ids']) - valid}"})
+                    comp_defs[name]["txn_ids"] = ids
+                    comp_defs[name]["off_ledger_ids"] = m.get("off_ledger_ids", [])
             covenant = {
-                "components": {c["name"]: c["definition"] for c in clause_spec["components"]},
+                "components": comp_defs,
                 "formula": clause_spec["formula"],
                 "threshold": clause_spec["threshold"],
             }

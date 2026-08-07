@@ -7,7 +7,7 @@ cd "$(dirname "$0")/.."
 PY=.venv/bin/python
 
 echo "== wiping derived artifacts (keeping llm_cache + parsed_docs/ocr) =="
-rm -f artifacts/{doc_index,scenario_meta,facts,categorized_ledger,answers,answers_judged,audit_trails,flags,judge_report}.json
+rm -f artifacts/{doc_index,scenario_meta,facts,categorized_ledger,answers,answers_judged,audit_trails,flags,judge_report,composition,composition_flags}.json
 
 echo "== S0 ledger =="        && $PY src/ledger.py
 echo "== S1 ingest =="        && $PY src/ingest.py | tail -2
@@ -16,6 +16,7 @@ echo "== S2 classify =="      && $PY src/classify.py | tail -8
 echo "== S2b scenario meta ==" && $PY src/scenario_meta.py | tail -3
 echo "== S3 extract =="       && $PY src/extract.py | tail -5
 echo "== S4 categorize =="    && $PY src/categorize.py | tail -13
+echo "== S4b composition ==" && $PY src/composition.py | tail -14
 echo "== S5 compute =="       && $PY src/run_all.py | tail -20
 echo "== S6 judge =="         && $PY src/judge.py | tail -25
 echo "== S7 assemble =="      && $PY src/assemble.py artifacts/answers_judged.json submission.json

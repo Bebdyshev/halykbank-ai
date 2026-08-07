@@ -306,6 +306,44 @@ def test_covenant_period_filters_rows():
     assert r["actual"] == 700_000.00         # 2024 row filtered by covenant period
 
 
+
+
+# --- composition map: explicit txn membership overrides categories ----------
+def test_component_explicit_txn_ids():
+    rows = [row("TXN-X5-0001", -1_000_000.00), row("TXN-X5-0002", -400_000.00),
+            row("TXN-X5-0003", -250_000.00)]
+    facts = {"categories": {"TXN-X5-0001": "OPEX", "TXN-X5-0002": "OPEX",
+                            "TXN-X5-0003": "INSURANCE"},
+             "off_ledger": [{"id": "sev", "category": "PAYROLL", "amount": 100_000.0}]}
+    covenant = {
+        "components": {"opex": {"categories": ["OPEX"],
+                                "txn_ids": ["TXN-X5-0001", "TXN-X5-0003"],
+                                "off_ledger_ids": ["sev"]}},
+        "formula": "opex",
+        "threshold": {"op": "<=", "value": 2_000_000.00, "strict": True},
+    }
+    r = compute_cell(covenant, rows, facts)
+    # explicit list wins: 1,000,000 + 250,000 (insurance-labeled!) + 100,000 off-ledger
+    assert r["actual"] == 1_350_000.00
+
+
+def test_component_explicit_ids_respect_adjustments():
+    rows = [row("TXN-X6-0001", None), row("TXN-X6-0002", -300_000.00)]
+    facts = {"categories": {"TXN-X6-0001": "PAYROLL", "TXN-X6-0002": "PAYROLL"},
+             "amount_fills": {"TXN-X6-0001": -700_000.00},
+             "exclusions": ["TXN-X6-0002"]}
+    covenant = {
+        "components": {"p": {"categories": ["PAYROLL"],
+                             "txn_ids": ["TXN-X6-0001", "TXN-X6-0002"],
+                             "off_ledger_ids": []}},
+        "formula": "p",
+        "threshold": {"op": "<=", "value": 1_000_000.00, "strict": True},
+    }
+    r = compute_cell(covenant, rows, facts)
+    assert r["actual"] == 700_000.00  # fill applied, excluded row still excluded
+
+
+
 if __name__ == "__main__":
     import traceback
     fns = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
