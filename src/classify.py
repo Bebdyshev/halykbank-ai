@@ -14,7 +14,7 @@ from collections import Counter
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llm import CHEAP, STRONG, generate  # noqa: E402
+from llm import CHEAP, STRONG, generate, pmap  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PARSED = REPO / "artifacts" / "parsed_docs"
@@ -117,8 +117,7 @@ def main() -> None:
     manifest = json.loads((REPO / "artifacts" / "doc_manifest.json").read_text())
     valid_sids = set(scenario_accounts)
 
-    index = {}
-    for txt_file in sorted(PARSED.glob("*.txt")):
+    def _one(txt_file):
         name = txt_file.stem
         text = txt_file.read_text()
         ocr_pages = manifest.get(name, {}).get("ocr_needed_pages", [])
@@ -146,13 +145,15 @@ def main() -> None:
             result["scenario_id"] = None
 
         nospace = re.sub(r"\s+", "", text)
-        index[name] = {
+        return name, {
             **result,
             "account_id": scenario_accounts.get(result["scenario_id"]),
             "txn_refs": sorted(set(
                 m.group(0) for m in re.finditer(r"TXN-[A-Za-z]*\d+-\d+", nospace))),
             "ocr_needed_pages": ocr_pages,
         }
+
+    index = dict(pmap(_one, sorted(PARSED.glob("*.txt"))))
 
     out = REPO / "artifacts" / "doc_index.json"
     out.write_text(json.dumps(index, indent=1, ensure_ascii=False))

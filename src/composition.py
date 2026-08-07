@@ -23,7 +23,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llm import STRONG, generate  # noqa: E402
+from llm import STRONG, generate, pmap  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 ART = REPO / "artifacts"
@@ -234,16 +234,20 @@ def main():
     facts = json.loads((ART / "facts.json").read_text())
     categories = json.loads((ART / "categorized_ledger.json").read_text())
 
-    out, all_flags = {}, []
-    for sid in sorted(ledger):
+    def _one(sid):
         sf = run_all.build_scenario_facts(sid, ledger[sid], facts, categories, [])
         comp_map, flags = build_for_scenario(sid, facts, categories, ledger, sf)
-        all_flags += flags
         if comp_map:
-            out[sid] = comp_map
             n = sum(len(v) for v in comp_map.values())
             print(f"{sid}: composition for {len(comp_map)} clauses / {n} components"
                   + (f", {len(flags)} mismatch flags" if flags else ""))
+        return sid, comp_map, flags
+
+    out, all_flags = {}, []
+    for sid, comp_map, flags in pmap(_one, sorted(ledger)):
+        all_flags += flags
+        if comp_map:
+            out[sid] = comp_map
 
     (ART / "composition.json").write_text(json.dumps(out, indent=1, ensure_ascii=False))
     (ART / "composition_flags.json").write_text(json.dumps(all_flags, indent=1, ensure_ascii=False))

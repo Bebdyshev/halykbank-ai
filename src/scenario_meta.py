@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llm import CHEAP, generate  # noqa: E402
+from llm import CHEAP, generate, pmap  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PARSED = REPO / "artifacts" / "parsed_docs"
@@ -47,13 +47,18 @@ PROMPT = (
 
 def main() -> None:
     index = json.loads((REPO / "artifacts" / "doc_index.json").read_text())
-    meta = {}
-    for doc, m in sorted(index.items()):
-        if m["doc_type"] == "loan_agreement" and m["authority"] == "active" and m["scenario_id"]:
-            text = (PARSED / f"{doc}.txt").read_text()[:30000]
-            meta[m["scenario_id"]] = {
-                "doc": doc, **generate(PROMPT + text, model=CHEAP, schema=SCHEMA)}
-            print(m["scenario_id"], "->", meta[m["scenario_id"]]["borrower_name"])
+    agreements = [(doc, m) for doc, m in sorted(index.items())
+                  if m["doc_type"] == "loan_agreement" and m["authority"] == "active"
+                  and m["scenario_id"]]
+
+    def _one(item):
+        doc, m = item
+        text = (PARSED / f"{doc}.txt").read_text()[:30000]
+        r = {"doc": doc, **generate(PROMPT + text, model=CHEAP, schema=SCHEMA)}
+        print(m["scenario_id"], "->", r["borrower_name"])
+        return m["scenario_id"], r
+
+    meta = dict(pmap(_one, agreements))
     (REPO / "artifacts" / "scenario_meta.json").write_text(
         json.dumps(meta, indent=1, ensure_ascii=False))
 

@@ -11,6 +11,7 @@
   the $ budget is observable at any moment.
 """
 import base64
+import concurrent.futures as _futures
 import hashlib
 import json
 import os
@@ -124,6 +125,30 @@ def total_spend() -> float:
     if not SPEND.exists():
         return 0.0
     return json.loads(SPEND.read_text()).get("total_usd", 0.0)
+
+
+def _atomic_write(path: Path, obj):
+    tmp = path.with_suffix(".tmp" + str(os.getpid()) + str(threading.get_ident()))
+    tmp.write_text(json.dumps(obj, ensure_ascii=False))
+    os.replace(tmp, path)
+
+
+def workers() -> int:
+    return int(os.environ.get("PIPELINE_WORKERS")
+               or _env_file_get("PIPELINE_WORKERS") or 8)
+
+
+def pmap(fn, items, max_workers=None):
+    """Ordered parallel map with exception propagation - the pipeline's
+    stage-level parallelism helper."""
+    items = list(items)
+    if not items:
+        return []
+    n = min(max_workers or workers(), len(items))
+    if n <= 1:
+        return [fn(x) for x in items]
+    with _futures.ThreadPoolExecutor(max_workers=n) as ex:
+        return list(ex.map(fn, items))
 
 
 def _cache_key(model: str, prompt: str, img_hash: str, schema) -> Path:
@@ -240,8 +265,7 @@ def generate(prompt, model: str = STRONG, schema: dict = None, images: list = No
         for attempt in range(max_retries):
             try:
                 result = _call_openai(model, prompt, images, schema, reasoning_effort)
-                key.write_text(json.dumps(
-                    {"model": model, "result": result}, ensure_ascii=False))
+                _atomic_write(key, {"model": model, "result": result})
                 return result
             except Exception as e:  # noqa: BLE001
                 last = e
@@ -256,6 +280,5 @@ def generate(prompt, model: str = STRONG, schema: dict = None, images: list = No
         print(f"  [llm] openai {model} failed ({str(last)[:90]}); trying gemini")
 
     result, served_by = _call_gemini(prompt, images, schema)
-    key.write_text(json.dumps(
-        {"model": f"gemini:{served_by}", "result": result}, ensure_ascii=False))
+    _atomic_write(key, {"model": f"gemini:{served_by}", "result": result})
     return result

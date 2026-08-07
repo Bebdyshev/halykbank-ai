@@ -15,7 +15,7 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from llm import CHEAP, STRONG, generate  # noqa: E402
+from llm import CHEAP, STRONG, generate, pmap  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 PARSED = REPO / "artifacts" / "parsed_docs"
@@ -518,22 +518,33 @@ def main() -> None:
     scenario_meta = json.loads((REPO / "artifacts" / "scenario_meta.json").read_text())
     out = {"kyc": {}, "audit": {}, "covenants": {}, "group": {}}
 
-    for doc, meta in sorted(index.items()):
+    def _one(item):
+        doc, meta = item
         sid, dt, auth = meta["scenario_id"], meta["doc_type"], meta["authority"]
         if dt == "kyc_dossier" and sid:
             print(f"KYC {sid} <- {doc}")
-            out["kyc"][sid] = {"doc": doc, **extract_kyc(doc)}
-        elif dt in ("audit_report", "treasury_memo") and sid and auth != "draft":
+            return ("kyc", sid, {"doc": doc, **extract_kyc(doc)})
+        if dt in ("audit_report", "treasury_memo") and sid and auth != "draft":
             print(f"AUDIT {sid} <- {doc}")
-            out["audit"].setdefault(sid, []).append({"doc": doc, **extract_audit(doc)})
-        elif dt == "loan_agreement" and auth == "active" and sid:
+            return ("audit", sid, {"doc": doc, **extract_audit(doc)})
+        if dt == "loan_agreement" and auth == "active" and sid:
             print(f"COVENANTS {sid} <- {doc}")
-            out["covenants"][sid] = {"doc": doc, **extract_covenants(doc, sid)}
-        elif dt == "group_financials":
+            return ("covenants", sid, {"doc": doc, **extract_covenants(doc, sid)})
+        if dt == "group_financials":
             g, link = extract_group(doc, scenario_meta)
             print(f"GROUP {doc} -> {link['consolidates_borrower']}")
             if g and link["consolidates_borrower"]:
-                out["group"][link["consolidates_borrower"]] = g
+                return ("group", link["consolidates_borrower"], g)
+        return None
+
+    for r in pmap(_one, sorted(index.items())):
+        if r is None:
+            continue
+        kind, sid, payload = r
+        if kind == "audit":
+            out["audit"].setdefault(sid, []).append(payload)
+        else:
+            out[kind][sid] = payload
 
     (REPO / "artifacts" / "facts.json").write_text(
         json.dumps(out, indent=1, ensure_ascii=False))

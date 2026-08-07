@@ -19,7 +19,7 @@ import categorize  # noqa: E402
 import extract  # noqa: E402
 import run_all  # noqa: E402
 from compute import compute_cell  # noqa: E402
-from llm import STRONG, generate  # noqa: E402
+from llm import STRONG, generate, pmap  # noqa: E402
 
 REPO = Path(__file__).resolve().parent.parent
 ART = REPO / "artifacts"
@@ -360,18 +360,22 @@ def main() -> None:
                 attention.add((sid, clause))
                 report.append(f"{sid}/{clause}: near-limit margin {round(m, 2)}% -> review")
 
-    # ---- Stage B: judge per SCENARIO (one batched call for all its cells)
+    # ---- Stage B: judge per SCENARIO (one batched call for all its cells).
+    # Verdict calls run in PARALLEL (read-only); fixes apply sequentially
+    # afterwards because they mutate shared facts/categories.
     for rnd in range(1, ROUNDS + 1):
         n_disagree = 0
-        for sid in sorted(template["answers"]):
-            if sid not in answers or sid not in trails:
-                continue
-            if rnd > 1 and not any((sid, c) in attention
-                                   for c in template["answers"][sid]):
-                continue
-            prompt = _scenario_context(sid, trails, facts, ledger, answers)
-            result = generate(prompt, model=STRONG, schema=JUDGE_SCHEMA,
-                              reasoning_effort="high")
+        todo = [sid for sid in sorted(template["answers"])
+                if sid in answers and sid in trails
+                and (rnd == 1 or any((sid, c) in attention
+                                     for c in template["answers"][sid]))]
+        verdicts = dict(zip(todo, pmap(
+            lambda s: generate(_scenario_context(s, trails, facts, ledger, answers),
+                               model=STRONG, schema=JUDGE_SCHEMA,
+                               reasoning_effort="high"),
+            todo)))
+        for sid in todo:
+            result = verdicts[sid]
             cell_verdicts = {c["clause"]: c for c in result.get("cells", [])}
             scenario_changed = False
             for clause in sorted(template["answers"][sid]):

@@ -19,7 +19,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 from extract import TAXONOMY  # noqa: E402
-from llm import CHEAP, STRONG, generate  # noqa: F401  # noqa: E402
+from llm import CHEAP, STRONG, generate, pmap  # noqa: F401,E402
 
 REPO = Path(__file__).resolve().parent.parent
 
@@ -132,8 +132,7 @@ def main() -> None:
     meta = json.loads((REPO / "artifacts" / "scenario_meta.json").read_text())
     stem_counts = _stem_counts(ledger)
 
-    out = {}
-    for sid in sorted(ledger):
+    def _scenario(sid):
         rows = ledger[sid]
         kyc = facts["kyc"].get(sid, {})
         sm = meta.get(sid, {})
@@ -146,8 +145,9 @@ def main() -> None:
             "perimeter_quote": (kyc.get("perimeter_rule") or {}).get("quote"),
         }
 
-        p1 = label_pass(rows, ctx, stem_counts, STRONG)
-        p2 = label_pass(rows, ctx, stem_counts, CHEAP, shuffle_seed=42)
+        both = pmap(lambda args: label_pass(rows, ctx, stem_counts, *args),
+                    [(STRONG,), (CHEAP, 42)], max_workers=2)
+        p1, p2 = both[0], both[1]
 
         labels = {}
         disputed = []
@@ -190,9 +190,11 @@ def main() -> None:
                 pick = tie_by_id.get(r["txn_id"], a)
                 labels[r["txn_id"]] = {**pick, "agree": False,
                                        "pass1": a["category"], "pass2": b["category"]}
-        out[sid] = labels
         print(f"{sid}: {len(rows)} rows, {n_cat} category / {n_decoy} decoy disagreements"
               f" -> 1 batched tie-break call")
+        return sid, labels
+
+    out = dict(pmap(_scenario, sorted(ledger)))
 
     (REPO / "artifacts" / "categorized_ledger.json").write_text(
         json.dumps(out, indent=1, ensure_ascii=False))
