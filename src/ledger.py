@@ -12,10 +12,22 @@ import re
 from pathlib import Path
 
 REPO = Path(__file__).resolve().parent.parent
-LEDGER = REPO / "case-related-docs" / "master_ledger_2025.csv"
+def _find_ledger():
+    hits = sorted((REPO / "case-related-docs").glob("*.csv"))
+    named = [h for h in hits if "ledger" in h.name.lower()]
+    return (named or hits)[0]
+
+LEDGER = _find_ledger()
 TEMPLATE = REPO / "case-related-docs" / "submission_template.json"
 
-TXN_RE = re.compile(r"^TXN-([A-Za-z]+\d+)-\d+$")
+def _txn_re():
+    with open(LEDGER) as f:
+        sample = next(csv.DictReader(f))["txn_id"]
+    m = re.match(r"^([A-Za-z]+)-", sample)
+    prefix = m.group(1) if m else "TXN"
+    return re.compile(rf"^{prefix}-([A-Za-z]*\d+)-\d+$")
+
+TXN_RE = _txn_re()
 
 
 def load() -> tuple:

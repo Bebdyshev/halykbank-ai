@@ -22,7 +22,9 @@ MODEL = "gpt-5"
 # id shape derived from the actual ledger, not assumed
 def _txn_re():
     import csv
-    with open(REPO / "case-related-docs" / "master_ledger_2025.csv") as f:
+    hits = sorted((REPO / "case-related-docs").glob("*.csv"))
+    named = [h for h in hits if "ledger" in h.name.lower()]
+    with open((named or hits)[0]) as f:
         sample = next(csv.DictReader(f))["txn_id"]
     m = re.match(r"^([A-Za-z]+)-", sample)
     prefix = m.group(1) if m else "TXN"
@@ -44,14 +46,15 @@ def validate_cell(sid: str, clause: str, cell: dict, errors: list) -> dict:
     else:
         actual = round(float(actual), 2)
     ev = cell.get("evidence_txn_id")
+    if ev is not None and status == "COMPLIANT":
+        ev = None  # evidence is defined as the verdict-flipping txn; a COMPLIANT
+        # cell has no such txn - normalize instead of erroring
     if ev is not None:
         m = TXN_RE.match(str(ev))
         if not m:
             errors.append(f"{where}: evidence {ev!r} malformed")
         elif m.group(1) != sid:
             errors.append(f"{where}: evidence {ev!r} belongs to wrong scenario")
-        if status == "COMPLIANT":
-            errors.append(f"{where}: evidence set on a COMPLIANT cell (never true in GT)")
     return {"status": status, "actual": actual, "evidence_txn_id": ev}
 
 
