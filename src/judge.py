@@ -216,12 +216,15 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
         report.append(f"{sid}/{clause}: re-extracted covenants ({critique[:100]})")
         changed = True
 
-    if row_issues:
-        wanted = {t for i in row_issues for t in i["txn_ids"]}
+    decoy_rehabs = [i for i in row_issues if i["type"] == "false_decoy"]
+    other_rows = [i for i in row_issues if i["type"] == "suspect_category"]
+
+    if other_rows:
+        wanted = {t for i in other_rows for t in i["txn_ids"]}
         rows = [r for r in ledger[sid] if r["txn_id"] in wanted]
         if rows:
             kyc = facts["kyc"].get(sid, {})
-            concerns = "; ".join(i["explanation"] for i in row_issues)
+            concerns = "; ".join(i["explanation"] for i in other_rows)
             relabel = generate(
                 "Re-examine these ledger rows' categories in light of reviewer concerns.\n"
                 f"CONCERNS: {concerns}\n"
@@ -235,6 +238,36 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report):
                     categories[sid][lab["txn_id"]] = {**lab, "agree": False, "rejudged": True}
                     report.append(f"{sid}/{clause}: relabeled {lab['txn_id']} -> {lab['category']}")
                     changed = True
+
+    # H2: rehabilitating a decoy (NOISE -> real) is dangerous - a false NOISE
+    # deletes money, but a false rehab quietly pollutes every covenant. Gate it
+    # behind a devil's-advocate check that must overcome an explicit presumption.
+    if decoy_rehabs:
+        wanted = {t for i in decoy_rehabs for t in i["txn_ids"]}
+        rows = [r for r in ledger[sid] if r["txn_id"] in wanted]
+        meta_all = json.loads((ART / "scenario_meta.json").read_text())
+        industry = meta_all.get(sid, {}).get("industry", "unknown")
+        for r in rows:
+            check = generate(
+                "A reviewer wants to RE-INCLUDE this ledger row previously marked as a "
+                "planted decoy. Presume it IS a decoy unless the evidence clearly says "
+                "otherwise. Rehabilitate ONLY if BOTH hold:\n"
+                "1) the counterparty plausibly serves this borrower's specific industry "
+                f"({industry});\n"
+                "2) the description is coherent with what a company of that NAME would "
+                "do (a stationery firm does not pay out insurance claims).\n"
+                "Recycled generic-sounding counterparty names shared across many "
+                "borrowers are decoys. When in doubt, keep NOISE.\n"
+                f"REVIEWER'S ARGUMENT: {'; '.join(i['explanation'] for i in decoy_rehabs)}\n"
+                f"ROW: {json.dumps(r, ensure_ascii=False)}",
+                model=STRONG, schema=categorize.ROW_SCHEMA)
+            for lab in check["labels"]:
+                if lab["txn_id"] == r["txn_id"] and not lab["is_decoy"]                         and lab["category"] != "NOISE":
+                    categories[sid][r["txn_id"]] = {**lab, "agree": False, "rejudged": True}
+                    report.append(f"{sid}/{clause}: decoy rehab CONFIRMED {r['txn_id']} -> {lab['category']}")
+                    changed = True
+                else:
+                    report.append(f"{sid}/{clause}: decoy rehab DENIED {r['txn_id']} (stays NOISE)")
 
     if audit_issues:
         hints = "; ".join(i["explanation"] for i in audit_issues)

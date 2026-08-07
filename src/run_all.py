@@ -105,6 +105,39 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
         if threshold is not None and o["pct"] >= threshold:
             affiliate_names.add(o["name"])
 
+    # H4: the dossier's own numeric rules are LAW - enforced in code, overriding
+    # any model intuition, with a flag for every forced change.
+    def norm(s):
+        import re as _re
+        s = (s or "").lower()
+        s = _re.sub(r"[«»\"'().,]", " ", s)
+        s = _re.sub(r"\b(llp|jsc|llc|ltd|inc|тоо|ао|оао|зао|пао)\b", " ", s)
+        return _re.sub(r"\s+", " ", s).strip()
+
+    ownership_by_norm = {norm(o["name"]): o for o in kyc.get("ownership", [])}
+    perim = kyc.get("perimeter_rule")
+    subs_by_norm = {norm(s["name"]): s for s in kyc.get("subsidiaries", [])}
+
+    def ownership_entry(row, lab):
+        cand = lab.get("kyc_matched_name")
+        if cand and norm(cand) in ownership_by_norm:
+            return ownership_by_norm[norm(cand)]
+        cp = norm(row["counterparty"])
+        for n, o in ownership_by_norm.items():
+            if n and (n in cp or cp in n):
+                return o
+        return None
+
+    def sub_entry(row, lab):
+        cand = lab.get("kyc_matched_name")
+        if cand and norm(cand) in subs_by_norm:
+            return subs_by_norm[norm(cand)]
+        cp = norm(row["counterparty"])
+        for n, s in subs_by_norm.items():
+            if n and (n in cp or cp in n):
+                return s
+        return None
+
     for row in ledger_rows:
         txn = row["txn_id"]
         lab = labels.get(txn)
@@ -113,15 +146,44 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
             cats[txn] = "OPEX"
             continue
         cats[txn] = lab["category"]
-        if lab["category"] == "RELATED_PARTY":
-            if lab.get("match_kind") != "affiliate" or (
-                    threshold is not None and lab.get("kyc_matched_name")
-                    and lab["kyc_matched_name"] not in affiliate_names):
+
+        own = ownership_entry(row, lab)
+        is_payment = (row["amount"] or 0) < 0
+        if own is not None and threshold is not None and lab["category"] != "NOISE":
+            if own["pct"] >= threshold and is_payment                     and lab["category"] != "RELATED_PARTY":
+                flags.append({"scenario": sid, "type": "kyc_rule_enforced",
+                              "detail": f"{txn}: {own['name']} {own['pct']}% >= "
+                                        f"{threshold}% -> RELATED_PARTY"})
+                cats[txn] = "RELATED_PARTY"
+            elif own["pct"] < threshold and lab["category"] == "RELATED_PARTY":
+                flags.append({"scenario": sid, "type": "kyc_rule_enforced",
+                              "detail": f"{txn}: {own['name']} {own['pct']}% < "
+                                        f"{threshold}% -> not related (CONSULTING)"})
+                cats[txn] = "CONSULTING"
+        if cats[txn] == "RELATED_PARTY":
+            if own is None:
                 flags.append({"scenario": sid, "type": "related_party_unverified",
                               "detail": f"{txn}: {lab.get('kyc_matched_name')}"})
             related_txns.append(txn)
-        if lab["category"] == "SUBSIDIARY_TRANSFER":
-            kyc_linked.append(txn)
+
+        # subsidiary perimeter: transfers to RESTRICTED subs are excluded from
+        # the transfers metric (they remain plain capex by nature)
+        if cats[txn] == "SUBSIDIARY_TRANSFER":
+            sub = sub_entry(row, lab)
+            if sub is not None and perim:
+                above = sub["pledged_pct"] >= perim["cut_pct"]
+                treatment = (perim["above_or_equal_treatment"] if above
+                             else perim["below_treatment"])
+                if treatment == "restricted":
+                    flags.append({"scenario": sid, "type": "kyc_rule_enforced",
+                                  "detail": f"{txn}: {sub['name']} pledged "
+                                            f"{sub['pledged_pct']}% -> restricted, "
+                                            "transfer excluded (CAPEX)"})
+                    cats[txn] = "CAPEX"
+                else:
+                    kyc_linked.append(txn)
+            else:
+                kyc_linked.append(txn)
 
     if threshold is None and related_txns:
         flags.append({"scenario": sid, "type": "kyc_threshold_missing",

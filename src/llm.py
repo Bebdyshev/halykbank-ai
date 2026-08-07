@@ -89,10 +89,12 @@ def _client_for(model: str):
         if "deepseek" not in _clients:
             _clients["deepseek"] = OpenAI(
                 api_key=_env("DEEPSEEK_API_KEY"),
-                base_url="https://api.deepseek.com")
+                base_url="https://api.deepseek.com",
+                timeout=180.0, max_retries=2)
         return _clients["deepseek"]
     if "openai" not in _clients:
-        _clients["openai"] = OpenAI(api_key=_env("OPENAI_API_KEY"))
+        _clients["openai"] = OpenAI(api_key=_env("OPENAI_API_KEY"),
+                                    timeout=180.0, max_retries=2)
     return _clients["openai"]
 
 
@@ -165,8 +167,28 @@ def _call_openai(model, prompt, images, schema, reasoning_effort):
     return json.loads(text) if schema else text
 
 
+def _gemini_safe_schema(node):
+    """Gemini's response_schema rejects JSON-Schema type unions like
+    ["string","null"] - rewrite them to a single type + nullable."""
+    if isinstance(node, list):
+        return [_gemini_safe_schema(x) for x in node]
+    if not isinstance(node, dict):
+        return node
+    out = {}
+    for k, v in node.items():
+        if k == "type" and isinstance(v, list):
+            non_null = [t for t in v if t != "null"]
+            out["type"] = non_null[0] if non_null else "string"
+            if "null" in v:
+                out["nullable"] = True
+        else:
+            out[k] = _gemini_safe_schema(v)
+    return out
+
+
 def _call_gemini(prompt, images, schema):
     from google.genai import types
+    schema = _gemini_safe_schema(schema) if schema else schema
     parts = []
     for p in images or []:
         mime = "image/png" if str(p).endswith(".png") else "image/jpeg"
@@ -224,7 +246,8 @@ def generate(prompt, model: str = STRONG, schema: dict = None, images: list = No
             except Exception as e:  # noqa: BLE001
                 last = e
                 msg = str(e)
-                if any(c in msg for c in ("429", "500", "503", "overloaded")):
+                if any(c in msg for c in ("429", "500", "503", "overloaded",
+                                          "Connection", "timeout", "Timeout")):
                     time.sleep(2 ** attempt * 3)
                     continue
                 if "json" in msg.lower() and attempt < max_retries - 1:
