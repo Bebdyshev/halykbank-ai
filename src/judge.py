@@ -413,6 +413,29 @@ def _apply_issues(sid, clause, issues, facts, categories, ledger, report, answer
     return changed
 
 
+def _apply_sovereignty(answers, answers_before, template, report):
+    """Engine sovereignty: a cell the deterministic engine computed is FINAL.
+    Measured across 9 disclosed GT runs: judge/solver status flips of computed
+    cells were wrong 6/6, and even actual 'refinements' hurt (P2 1.18->1.16).
+    The only accepted post-judge improvement is ADDING evidence where the
+    engine had none. Absent cells keep judge repairs / solver fills."""
+    for sid, clauses in template["answers"].items():
+        for clause in clauses:
+            before = answers_before.get(sid, {}).get(clause)
+            after = answers.get(sid, {}).get(clause)
+            if before is None or after == before:
+                continue
+            restored = dict(before)
+            if restored.get("evidence_txn_id") is None and after \
+                    and after.get("evidence_txn_id"):
+                restored["evidence_txn_id"] = after["evidence_txn_id"]
+            answers.setdefault(sid, {})[clause] = restored
+            report.append(
+                f"{sid}/{clause}: judge_flip_reverted -> engine answer restored "
+                f"(judged was {after and after.get('status')}/"
+                f"{after and after.get('actual')})")
+
+
 def main() -> None:
     ledger = json.loads((ART / "ledger_real.json").read_text())
     facts = json.loads((ART / "facts.json").read_text())
@@ -522,15 +545,8 @@ def main() -> None:
         if n_disagree == 0:
             break
 
-    # ---- never-worse invariant: a cell the judge's interventions broke gets
-    # its pre-judge answer back, not a solver guess
-    for sid, clauses in template["answers"].items():
-        for clause in clauses:
-            if answers.get(sid, {}).get(clause) is None \
-                    and answers_before.get(sid, {}).get(clause) is not None:
-                answers.setdefault(sid, {})[clause] = answers_before[sid][clause]
-                report.append(f"{sid}/{clause}: restored pre-judge answer "
-                              "(judge intervention broke the cell)")
+    # ---- engine sovereignty (see _apply_sovereignty docstring)
+    _apply_sovereignty(answers, answers_before, template, report)
 
     # ---- fill any still-missing cells with the fallback solver (empty = wrong)
     for sid, clauses in template["answers"].items():
