@@ -260,6 +260,29 @@ def build_scenario_facts(sid, ledger_rows, facts, categories, flags):
 _ISO = re.compile(r"^\d{4}-\d{2}-\d{2}$")
 
 
+def narrow_negative_denominator(covenant):
+    """A ratio X / (A - B) went negative because B ('operating expenses') was
+    extracted BROADLY (OPEX + PAYROLL + ...). Our taxonomy already carves
+    payroll/insurance/rent out of OPEX, so the agreement's «Операционные
+    расходы» is the narrow OPEX category (confirmed: P7 GT, P6 relabels).
+    Returns a repaired covenant copy, or None when the pattern doesn't apply.
+    Only ever called when the cell would otherwise stay absent."""
+    m = re.fullmatch(r"\s*(.+?)\s*/\s*\(\s*(\w+)\s*-\s*(\w+)\s*\)\s*",
+                     covenant["formula"])
+    if not m:
+        return None
+    b_name = m.group(3)
+    b = covenant["components"].get(b_name)
+    if b is None:
+        return None
+    cats = set(b.get("categories") or [])
+    if "OPEX" not in cats or cats == {"OPEX"}:
+        return None
+    return {**covenant,
+            "components": {**covenant["components"],
+                           b_name: {**b, "categories": ["OPEX"]}}}
+
+
 def build_covenant(sid, clause_spec, period, composition, ledger, flags):
     """Turn one raw clause spec into an engine-ready covenant, applying EVERY
     deterministic backstop. Shared by run_all.main and judge._recompute_scenario
@@ -380,10 +403,24 @@ def main() -> None:
             try:
                 r = compute_cell(covenant, ledger[sid], sf)
             except compute.NegativeDenominator as e:
-                flags.append({"scenario": sid, "type": "negative_denominator",
-                              "detail": f"{clause}: {e} - spec is broken, a "
-                                        "signed compare would silently pass"})
-                continue  # cell left absent -> judge/fallback must produce it
+                repaired = narrow_negative_denominator(covenant)
+                r = None
+                if repaired is not None:
+                    try:
+                        r = compute_cell(repaired, ledger[sid], sf)
+                        flags.append({
+                            "scenario": sid,
+                            "type": "denominator_narrowed_to_opex",
+                            "detail": f"{clause}: broad opex made the "
+                                      f"denominator negative ({e}); narrowed "
+                                      "to OPEX-only and recomputed"})
+                    except Exception:  # noqa: BLE001
+                        r = None
+                if r is None:
+                    flags.append({"scenario": sid, "type": "negative_denominator",
+                                  "detail": f"{clause}: {e} - spec is broken, a "
+                                            "signed compare would silently pass"})
+                    continue  # cell left absent -> judge/fallback must produce it
             except compute.EmptyComponent as e:
                 flags.append({"scenario": sid, "type": "empty_component",
                               "detail": f"{clause}: {e}"})
