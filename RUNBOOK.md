@@ -12,7 +12,7 @@ cat .env                   # DEEPSEEK_API_KEY и GEMINI_API_KEY живы, LLM_PR
 .venv/bin/python -c "import sys; sys.path.insert(0,'src'); import llm; print(llm.STRONG)"
 .venv/bin/python tests/test_compute.py          # 19/19
 .venv/bin/python -c "import sys; sys.path.insert(0,'src'); import ledger,ingest,ocr_scans,classify,scenario_meta,extract,categorize,composition,run_all,judge,assemble; print('all stages import OK')"  # ловит NameError, который ast не видит
-# баланс DeepSeek: https://platform.deepseek.com  (нужно >= $5 запаса)
+# баланс DeepSeek >= $5 (боевой прогон ~$2.65 + аварийный запас): https://platform.deepseek.com
 # квоты Gemini обновляются в полночь по Тихоокеанскому — OCR-фолбэк должен быть жив
 which tesseract            # OCR-фолбэк последней надежды (rus+kaz+eng установлены)
 # ПРЕФЛАЙТ VISION: один пробный vision-вызов (страница любого PDF) — убедиться,
@@ -88,8 +88,10 @@ print('team:', s['team'], '| email:', s['contact_email'], '| model:', s['model']
 
 ## Замеренные тайминги (репетиция 8-го, 8 воркеров, DeepSeek)
 
-Полный холодный прогон: **44 мин 20 сек, $2.38** (8 воркеров, DeepSeek v4,
-OCR через Gemini-фолбэк). Тёплый перезапуск из кэша: **16 секунд, $0.00**.
+Полный холодный прогон: **1 ч 47 мин, ~$2.65** (замер репетиции 8-го с обрывом
+сети; без обрыва ожидается ~1ч15м-1ч30м). Тёплый перезапуск из кэша: секунды.
+ДВА полных прогона в 3-часовое окно НЕ влезают — план Б только через
+перезапуск из кэша (он подхватывает всё сделанное мгновенно).
 
 | Стадия | Время (приблизительно) | Вызовов |
 |---|---|---|
