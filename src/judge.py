@@ -111,7 +111,7 @@ def _sane_evidence(ev, rows):
     return None
 
 
-def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=3):
+def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=5):
     """The fallback solver is the least deterministic piece of the pipeline
     (rehearsal showed its cells flip between runs). Majority vote on status,
     median actual within the majority, modal evidence."""
@@ -130,6 +130,20 @@ def fallback_solve_voted(sid, clause, quote, facts_sf, rows, samples=3):
             "reasoning": f"vote {len(winners)}/{samples}: " + winners[0]["reasoning"]}
 
 
+def _category_sums(rows, facts_sf):
+    """Deterministic per-category |amount| totals (fills applied, NOISE and
+    unlabeled rows excluded) - handed to the fallback solver so the LLM picks
+    the formula composition but never does freehand arithmetic."""
+    sums = {}
+    fills = facts_sf.get("amount_fills", {})
+    for r in rows:
+        cat = facts_sf.get("categories", {}).get(r["txn_id"])
+        amt = r["amount"] if r.get("amount") is not None else fills.get(r["txn_id"])
+        if cat and cat != "NOISE" and amt is not None:
+            sums[cat] = round(sums.get(cat, 0.0) + abs(amt), 2)
+    return sums
+
+
 def fallback_solve(sid, clause, quote, facts_sf, rows, sample=0):
     eff = []
     for r in rows:
@@ -142,6 +156,9 @@ def fallback_solve(sid, clause, quote, facts_sf, rows, sample=0):
         "'reasoning' and output the final status/actual/evidence. actual = the metric's "
         "value (positive, 2 decimals; ratios as plain numbers). Status decided on the "
         f"unrounded value.\n\nCLAUSE:\n{quote}\n\n"
+        f"PRECOMPUTED CATEGORY SUMS (deterministic, fills applied, decoys excluded - "
+        f"build the metric from THESE, do not re-add rows yourself):\n"
+        f"{json.dumps(_category_sums(rows, facts_sf), ensure_ascii=False)}\n\n"
         f"ADJUSTMENT FACTS:\n{json.dumps({k: v for k, v in facts_sf.items() if k != 'categories'}, ensure_ascii=False)}\n\n"
         "LEDGER ROWS (with categories):\n" + "\n".join(eff))
     return generate(prompt, model=STRONG, schema=SOLVER_SCHEMA, reasoning_effort="high")
