@@ -31,7 +31,7 @@ HINT_PATTERNS = {
 }
 
 ACC_RE = re.compile(r"ACC-\d+(?!-)")
-TXN_RE = re.compile(r"TXN-([A-Za-z]*\d+)-\d+")
+TXN_RE = re.compile(r"TXN-([A-Za-z0-9]+)-[A-Za-z0-9-]*?\d+")
 
 SCHEMA = {
     "type": "object",
@@ -153,7 +153,7 @@ def main() -> None:
             **result,
             "account_id": scenario_accounts.get(result["scenario_id"]),
             "txn_refs": sorted(set(
-                m.group(0) for m in re.finditer(r"TXN-[A-Za-z]*\d+-\d+", nospace))),
+                m.group(0) for m in re.finditer(r"TXN-[A-Za-z0-9-]+?\d+", nospace))),
             "ocr_needed_pages": ocr_pages,
         }
 

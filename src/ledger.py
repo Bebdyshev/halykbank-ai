@@ -25,7 +25,7 @@ def _txn_re():
         sample = next(csv.DictReader(f))["txn_id"]
     m = re.match(r"^([A-Za-z]+)-", sample)
     prefix = m.group(1) if m else "TXN"
-    return re.compile(rf"^{prefix}-([A-Za-z]*\d+)-\d+$")
+    return re.compile(rf"^{prefix}-([A-Za-z0-9]+)-\d+$")
 
 TXN_RE = _txn_re()
 
@@ -38,8 +38,8 @@ def load() -> tuple:
     with open(LEDGER) as f:
         for row in csv.DictReader(f):
             n_total += 1
-            m = TXN_RE.match(row["txn_id"])
-            sid = m.group(1) if m else None
+            parts = row["txn_id"].split("-")
+            sid = parts[1] if len(parts) >= 3 else None
             if sid not in scenario_ids:
                 n_decoy += 1
                 continue

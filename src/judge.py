@@ -105,7 +105,7 @@ def _sane_evidence(ev, rows):
     valid = {r["txn_id"] for r in rows}
     if ev in valid:
         return ev
-    for tok in __import__("re").findall(r"[A-Za-z]+-[A-Za-z0-9]+-\d+", ev):
+    for tok in __import__("re").findall(r"TXN[A-Za-z0-9-]*\d", ev):
         if tok in valid:
             return tok
     return None

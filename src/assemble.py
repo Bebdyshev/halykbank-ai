@@ -28,9 +28,18 @@ def _txn_re():
         sample = next(csv.DictReader(f))["txn_id"]
     m = re.match(r"^([A-Za-z]+)-", sample)
     prefix = m.group(1) if m else "TXN"
-    return re.compile(rf"^{prefix}-([A-Za-z]*\d+)-\d+$")
+    return re.compile(rf"^{prefix}-([A-Za-z0-9]+)-\d+$")
 
 TXN_RE = _txn_re()
+
+def _ledger_ids():
+    try:
+        rows = json.loads((REPO / "artifacts" / "ledger_real.json").read_text())
+        return {sid: {r["txn_id"] for r in v} for sid, v in rows.items()}
+    except Exception:  # noqa: BLE001
+        return {}
+
+LEDGER_IDS = _ledger_ids()
 
 
 def validate_cell(sid: str, clause: str, cell: dict, errors: list) -> dict:
@@ -50,12 +59,15 @@ def validate_cell(sid: str, clause: str, cell: dict, errors: list) -> dict:
         ev = None  # evidence is defined as the verdict-flipping txn; a COMPLIANT
         # cell has no such txn - normalize instead of erroring
     if ev is not None:
+        valid_ids = LEDGER_IDS.get(sid, set())
         m = TXN_RE.match(str(ev))
-        if not m or m.group(1) != sid:
-            # salvage: first well-formed id of THIS scenario inside the string
+        shape_ok = bool(m and m.group(1) == sid)
+        if not (str(ev) in valid_ids or (not valid_ids and shape_ok)):
+            # salvage: first id inside the string that EXISTS in this
+            # scenario's ledger (membership beats shape - KC uses TXN-KC-CAP-29)
             salvaged = next(
-                (t for t in re.findall(r"[A-Za-z]+-[A-Za-z0-9]+-\d+", str(ev))
-                 if TXN_RE.match(t) and TXN_RE.match(t).group(1) == sid), None)
+                (t for t in re.findall(r"TXN[A-Za-z0-9-]*\d", str(ev))
+                 if t in valid_ids), None)
             errors.append(f"{where}: evidence {ev!r} "
                           + (f"salvaged -> {salvaged}" if salvaged
                              else "malformed -> null"))
