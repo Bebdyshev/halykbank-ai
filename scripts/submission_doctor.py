@@ -62,8 +62,8 @@ def main():
                 bad = True
             act = cell.get("actual")
             if not isinstance(act, (int, float)) or isinstance(act, bool) \
-                    or not math.isfinite(act) or act <= 0:
-                rep("FATAL", f"{scen}/{cl}: actual={act!r} (must be a positive number)")
+                    or not math.isfinite(act) or act < 0:
+                rep("FATAL", f"{scen}/{cl}: actual={act!r} (must be a non-negative number)")
                 bad = True
             elif round(act, 2) != act:
                 rep(FIX, f"{scen}/{cl}: actual {act} -> {round(act, 2)}")

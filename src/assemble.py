@@ -16,7 +16,7 @@ REPO = Path(__file__).resolve().parent.parent
 TEMPLATE = REPO / "case-related-docs" / "submission_template.json"
 
 TEAM = "halykbank-ai"
-CONTACT = "fikret.huseynov2006@gmail.com"
+CONTACT = "berdyshev.k1004@gmail.com"
 MODEL = __import__("os").environ.get("LLM_PROVIDER", "deepseek") + "-pipeline"
 
 # id shape derived from the actual ledger, not assumed
@@ -50,8 +50,8 @@ def validate_cell(sid: str, clause: str, cell: dict, errors: list) -> dict:
     actual = cell.get("actual")
     if not isinstance(actual, (int, float)) or isinstance(actual, bool):
         errors.append(f"{where}: actual {actual!r} is not a number")
-    elif actual <= 0:
-        errors.append(f"{where}: actual {actual} must be positive")
+    elif actual < 0:
+        errors.append(f"{where}: actual {actual} must be non-negative")
     else:
         actual = round(float(actual), 2)
     ev = cell.get("evidence_txn_id")
